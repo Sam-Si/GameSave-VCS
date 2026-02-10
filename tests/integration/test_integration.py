@@ -59,13 +59,11 @@ def test_integration_manual_backup_and_restore(temp_setup):
     result = run_cli(["backup", game_name])
     assert result.returncode == 0, f"Backup failed: {result.stderr}"
     assert "Backed up" in result.stdout or "Backed up" in result.stderr
-    # Act: list
+    # Act: list + restore (no arg = latest for coverage/new UX)
     result = run_cli(["list", "--game", game_name])
     assert result.returncode == 0
-    backup_line = result.stdout.strip().split("\n")[0]
-    backup_path = backup_line.split(" | ")[-1]
     # Act: restore
-    run_cli(["restore", backup_path])
+    run_cli(["restore"])  # no arg = latest
     # Assert
     assert save_file.read_text() == "initial data"
 

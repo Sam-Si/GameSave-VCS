@@ -10,7 +10,7 @@ def main():
 
     add_parser = subparsers.add_parser('add', help='Add a game to watch')
     add_parser.add_argument('name', help='Game name')
-    add_parser.add_argument('path', nargs='?', help='Path to save file (optional for supported games)')
+    add_parser.add_argument('path', nargs='?', help='Path to save file or directory (optional for supported games)')
     add_parser.add_argument('--force', action='store_true', help='Update existing game path if already added')
 
     watch_parser = subparsers.add_parser('watch', help='Start watcher for a game')
@@ -25,9 +25,8 @@ def main():
     games_parser.add_argument('--search', help='Search for games by name')
 
     restore_parser = subparsers.add_parser('restore', help='Restore a save')
-    restore_parser.add_argument('backup_path', help='Path to backup file to restore')
+    restore_parser.add_argument('backup_path', nargs='?', help='Path to backup (file or directory) to restore; omitted = latest overall')
 
-    # backup manual (re-added for integration)
     backup_parser = subparsers.add_parser('backup', help='Manually backup a game')
     backup_parser.add_argument('name', help='Game name')
 

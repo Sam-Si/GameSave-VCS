@@ -1,5 +1,6 @@
 import pytest
 from unittest.mock import patch, MagicMock
+from pathlib import Path
 from gamesave_vcs.cli import main
 
 def test_cli_help():
@@ -35,14 +36,16 @@ def test_cli_watch():
     mock_watcher_cls.assert_called()
 
 def test_cli_list():
-    # Arrange
+    # Arrange: non-empty to hit print line
     with patch("gamesave_vcs.cli.list_saves") as mock_list:
-        mock_list.return_value = []
+        mock_list.return_value = [(1, Path("/fake"), "game")]
         # Act
         with patch("sys.argv", ["cli", "list"]):
-            main()
+            with patch("gamesave_vcs.cli.print") as mock_print:
+                main()
     # Assert
     mock_list.assert_called()
+    mock_print.assert_called()
 
 def test_cli_restore():
     # Arrange

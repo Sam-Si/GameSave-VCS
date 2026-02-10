@@ -1,6 +1,19 @@
 import json
 from pathlib import Path
 
+SUPPORTED_GAMES = {
+    "Minecraft": "~/.minecraft/saves/",
+    "Terraria": "~/.local/share/Terraria/",
+    "Stardew Valley": "~/.config/StardewValley/Saves/",
+    "The Witcher 3": "~/.local/share/CD Projekt Red/The Witcher 3/",
+    "Elden Ring": "~/.local/share/EldenRing/",
+    "Cyberpunk 2077": "~/.local/share/CD Projekt Red/Cyberpunk 2077/",
+    "Hades": "~/.local/share/Supergiant Games/Hades/",
+    "Celeste": "~/.local/share/Celeste/",
+    "Hollow Knight": "~/.local/share/Hollow Knight/",
+    "Doom Eternal": "~/.local/share/id Software/DOOM Eternal/",
+}
+
 def get_base_dir():
     return Path.home() / '.gamesave-vcs'
 
@@ -28,15 +41,27 @@ def save_config(config):
     with open(get_config_file(), 'w') as f:
         json.dump(config, f, indent=2)
 
-def add_game(name, save_path):
+def add_game(name, save_path, force=False):
     config = load_config()
     if name in config:
-        raise ValueError(f"Game {name} already exists")
+        if not force:
+            raise ValueError(f"Game {name} already exists")
+        print(f"Game {name} already exists - updating path (force mode)")
     config[name] = str(save_path)
     save_config(config)
     (get_backups_dir() / name).mkdir(exist_ok=True)
-    print(f"Added game {name} with save path {save_path}")
+    print(f"Added/updated game {name} with save path {save_path}")
 
 def get_game_path(name):
     config = load_config()
     return config.get(name)
+
+def list_supported_games():
+    return list(SUPPORTED_GAMES.keys())
+
+def search_games(query):
+    query = query.lower()
+    return [game for game in SUPPORTED_GAMES if query in game.lower()]
+
+def get_supported_game_path(game_name):
+    return SUPPORTED_GAMES.get(game_name)

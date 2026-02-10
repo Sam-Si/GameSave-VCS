@@ -95,3 +95,17 @@ def test_get_supported_game_path():
     path = get_supported_game_path("Elden Ring")
     assert path == "~/.local/share/EldenRing/"
     assert get_supported_game_path("unknown") is None
+
+def test_save_config(capsys):
+    # Arrange: real save_config body for coverage (open/json/ensure)
+    with patch("gamesave_vcs.config.ensure_dirs"):
+        with patch("gamesave_vcs.config.get_config_file") as mock_config:
+            mock_config.return_value = Path("/fake/config.json")
+            with patch("builtins.open", MagicMock()) as mock_open:
+                with patch("json.dump") as mock_json:
+                    # Act
+                    save_config({"test": "/path"})
+    # Assert
+    mock_json.assert_called()
+    captured = capsys.readouterr()
+    # no output but covers lines 40-42

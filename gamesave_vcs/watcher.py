@@ -2,7 +2,7 @@ import time
 import threading
 from pathlib import Path
 from .config import get_game_path
-from .backup import get_file_hash, backup_save
+from .backup import get_save_hash, backup_save
 
 class GameWatcher:
     def __init__(self, game_name, interval=5):
@@ -33,13 +33,13 @@ class GameWatcher:
             return
         save_path = Path(self.save_path)
         if not save_path.exists():
-            print("Save file does not exist")
+            print("Save path does not exist")
             return
-        self.last_hash = get_file_hash(save_path)
+        self.last_hash = get_save_hash(save_path)
         while self.running:
             time.sleep(self.interval)
             if save_path.exists():
-                current_hash = get_file_hash(save_path)
+                current_hash = get_save_hash(save_path)
                 if current_hash != self.last_hash:
                     print(f"Change detected in {self.game_name} save")
                     backup_save(self.game_name)

@@ -14,7 +14,7 @@ def get_file_hash(file_path):
 def backup_save(game_name):
     save_path = get_game_path(game_name)
     if not save_path or not Path(save_path).exists():
-        print(f"Save file for {game_name} not found")
+        print(f"Backup skipped for {game_name}: save file not found (nothing to backup yet)")
         return None
     save_path = Path(save_path)
     backup_dir = get_backups_dir() / game_name

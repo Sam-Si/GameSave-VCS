@@ -1,7 +1,7 @@
 import pytest
 from pathlib import Path
 from unittest.mock import patch, MagicMock
-from gamesave_vcs.config import add_game, get_game_path, load_config, save_config, ensure_dirs
+from gamesave_vcs.config import add_game, get_game_path, load_config, save_config, ensure_dirs, list_supported_games, search_games, get_supported_game_path
 
 def test_dirs_created():
     # Arrange
@@ -33,7 +33,7 @@ def test_load_save_config():
     # Assert
     assert loaded == {"test": "/path"}
 
-def test_add_game():
+def test_add_game(capsys):
     # Arrange
     with patch("gamesave_vcs.config.load_config") as mock_load:
         mock_load.return_value = {}
@@ -43,15 +43,30 @@ def test_add_game():
                 add_game("testgame", "/tmp/save.dat")
     # Assert
     mock_save.assert_called()
-    # Prints etc mocked
+    captured = capsys.readouterr()
+    assert "Added/updated game testgame" in captured.out
 
 def test_add_game_duplicate():
     # Arrange
     with patch("gamesave_vcs.config.load_config") as mock_load:
         mock_load.return_value = {"testgame": "/path"}
-        # Act + Assert
+        # Act + Assert (no force raises)
         with pytest.raises(ValueError):
             add_game("testgame", "/tmp/other.dat")
+
+def test_add_game_force_update(capsys):
+    # Arrange
+    with patch("gamesave_vcs.config.load_config") as mock_load:
+        mock_load.return_value = {"testgame": "/old/path"}
+        with patch("gamesave_vcs.config.save_config") as mock_save:
+            with patch("gamesave_vcs.config.get_backups_dir") as mock_backups:
+                # Act
+                add_game("testgame", "/new/path", force=True)
+    # Assert
+    mock_save.assert_called()
+    captured = capsys.readouterr()
+    assert "updating path (force mode)" in captured.out
+    assert "Added/updated game testgame" in captured.out
 
 def test_get_game_path():
     # Arrange
@@ -60,3 +75,23 @@ def test_get_game_path():
         # Act + Assert
         assert get_game_path("testgame") == "/tmp/save.dat"
         assert get_game_path("missing") is None
+
+def test_list_supported_games():
+    games = list_supported_games()
+    assert len(games) == 10
+    assert "Minecraft" in games
+
+def test_search_games():
+    results = search_games("witch")
+    assert "The Witcher 3" in results
+    results = search_games("xyz")
+    assert results == []
+    results = search_games("")
+    assert len(results) == 10
+    results = search_games("ELDEN")
+    assert "Elden Ring" in results
+
+def test_get_supported_game_path():
+    path = get_supported_game_path("Elden Ring")
+    assert path == "~/.local/share/EldenRing/"
+    assert get_supported_game_path("unknown") is None

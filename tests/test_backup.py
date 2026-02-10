@@ -24,7 +24,7 @@ def test_backup_save():
     assert backup_path is not None
     mock_copy.assert_called()
 
-def test_backup_save_missing():
+def test_backup_save_missing(capsys):
     # Arrange
     with patch("gamesave_vcs.backup.get_game_path") as mock_get:
         mock_get.return_value = None
@@ -32,6 +32,8 @@ def test_backup_save_missing():
         result = backup_save("testgame")
     # Assert
     assert result is None
+    captured = capsys.readouterr()
+    assert "Backup skipped for testgame: save file not found" in captured.out
 
 def test_list_saves():
     # Arrange

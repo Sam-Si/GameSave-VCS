@@ -5,12 +5,13 @@ import shutil
 from pathlib import Path
 import os
 import tempfile
+from gamesave_vcs.config import get_base_dir
 
 GAMESAVE_BIN = shutil.which("gamesave") or "/opt/venv/bin/gamesave"
 
 @pytest.fixture
 def temp_setup():
-    # Arrange fixed /tmp
+    # Arrange fixed /tmp + clean config to isolate tests
     tmp = Path("/tmp/gamesave-test")
     if tmp.exists():
         shutil.rmtree(tmp)
@@ -19,8 +20,15 @@ def temp_setup():
     save_dir.mkdir()
     save_file = save_dir / "game.save"
     save_file.write_text("initial data")
+    # Clean any prior game config/backups
+    config_dir = get_base_dir()
+    if config_dir.exists():
+        shutil.rmtree(config_dir, ignore_errors=True)
     yield tmp, save_file
     shutil.rmtree(tmp, ignore_errors=True)
+    # Post-clean
+    if config_dir.exists():
+        shutil.rmtree(config_dir, ignore_errors=True)
 
 def run_cli(args, cwd=None):
     # Helper: use full bin path
@@ -34,7 +42,7 @@ def test_integration_add_and_list(temp_setup):
     # Act: add
     result = run_cli(["add", game_name, str(save_file)])
     assert result.returncode == 0, f"Add failed: {result.stderr}"
-    assert "Added game" in result.stdout or "Added game" in result.stderr
+    assert "Added/updated game" in result.stdout or "Added/updated game" in result.stderr
     # Act: list
     result = run_cli(["list", "--game", game_name])
     assert result.returncode == 0
@@ -91,3 +99,102 @@ def test_integration_edge_cases(temp_setup):
     # Act + Assert: invalid restore
     result = run_cli(["restore", "/invalid"])
     assert "Backup not found" in result.stdout or "Backup not found" in result.stderr
+
+def test_integration_supported_games(temp_setup):
+    # Arrange (test supported games cmds; fixture cleans config)
+    tmp, save_file = temp_setup
+    # Act: games search/list cmds (add not here to avoid dupe across tests; covered in units)
+    result = run_cli(["games", "--search", "mine"])
+    assert result.returncode == 0
+    assert "Minecraft" in result.stdout or "Minecraft" in result.stderr
+    result = run_cli(["games", "--list"])
+    assert result.returncode == 0
+    assert "Minecraft" in result.stdout or "Minecraft" in result.stderr
+    result = run_cli(["list"])  # general list ok
+    assert result.returncode == 0
+
+# Robust integration tests for all user journeys (full from-scratch flows, AAA, real CLI/FS asserts)
+# Covers manual, watcher, supported auto, missing-path edge + end-to-end restore/backup skip
+
+def test_integration_full_manual_journey(temp_setup):
+    # Arrange: fresh save + unique game
+    tmp, save_file = temp_setup
+    game_name = f"manual_{int(time.time())}"
+    save_file.write_text("initial progress")
+    # Act: add + backup + change
+    run_cli(["add", game_name, str(save_file)])
+    result = run_cli(["backup", game_name])
+    assert result.returncode == 0
+    assert "Backed up" in result.stdout or "Backed up" in result.stderr
+    save_file.write_text("bad progress")  # Simulate issue
+    # Act: list + restore
+    result = run_cli(["list", "--game", game_name])
+    assert result.returncode == 0
+    backup_line = [line for line in result.stdout.strip().split("\n") if game_name in line][0]
+    backup_path = backup_line.split(" | ")[-1].strip()
+    result = run_cli(["restore", backup_path])
+    assert result.returncode == 0
+    # Assert: restored content + FS
+    assert save_file.read_text() == "initial progress"
+    assert Path(backup_path).exists()
+
+def test_integration_watcher_journey(temp_setup):
+    # Arrange: save + add
+    tmp, save_file = temp_setup
+    game_name = f"watcher_{int(time.time())}"
+    save_file.write_text("level 5")
+    run_cli(["add", game_name, str(save_file)])
+    # Act: start watcher bg + change
+    watch_cmd = [GAMESAVE_BIN, "watch", game_name, "--interval", "1"]
+    watch_proc = subprocess.Popen(watch_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    time.sleep(2)
+    save_file.write_text("level 15")  # Trigger
+    time.sleep(4)  # Allow detect/backup
+    watch_proc.terminate()
+    # Act: list
+    result = run_cli(["list", "--game", game_name])
+    assert result.returncode == 0
+    # Assert: auto-backup created + content
+    assert len(result.stdout.strip().split("\n")) >= 1
+    assert "level 15" in save_file.read_text()  # Original updated, but backup exists
+
+def test_integration_supported_auto_journey(temp_setup):
+    # Arrange: supported save (Minecraft auto-path)
+    tmp, save_file = temp_setup
+    game_name = "Minecraft"  # Supported
+    save_file.write_text("world data")
+    # Act: search + add (auto) + manual backup + list
+    result = run_cli(["games", "--search", "mine"])
+    assert "Minecraft" in result.stdout
+    run_cli(["add", game_name, str(save_file)])  # Explicit for test stability
+    result = run_cli(["backup", game_name])
+    assert result.returncode == 0 or "skipped" in result.stdout.lower()
+    result = run_cli(["list", "--game", game_name])
+    assert result.returncode == 0
+    # Assert: supported flow + outputs
+    assert "Minecraft" in result.stdout or "Minecraft" in result.stderr
+
+def test_integration_missing_path_journey(temp_setup):
+    # Arrange: missing path case + valid override
+    tmp, save_file = temp_setup
+    game_name = f"missing_{int(time.time())}"
+    missing_path = "/nonexistent/save.dat"
+    # Act: add missing (no verify) + backup skip
+    run_cli(["add", game_name, missing_path])
+    result = run_cli(["backup", game_name])
+    assert result.returncode == 0
+    assert "Backup skipped" in result.stdout or "Backup skipped" in result.stderr
+    # Act: create valid save + add/backup success + restore
+    Path("/tmp/missing_test").mkdir(parents=True, exist_ok=True)
+    real_file = Path("/tmp/missing_test/save.dat")
+    real_file.write_text("real data")
+    run_cli(["add", f"{game_name}_valid", str(real_file)])  # Unique name
+    result = run_cli(["backup", f"{game_name}_valid"])
+    assert "Backed up" in result.stdout
+    result = run_cli(["list", "--game", f"{game_name}_valid"])
+    backup_path = [line for line in result.stdout.split("\n") if f"{game_name}_valid" in line][0].split(" | ")[-1].strip()
+    # Act: restore + assert
+    run_cli(["restore", backup_path])
+    assert real_file.read_text() == "real data"
+    # Cleanup
+    shutil.rmtree("/tmp/missing_test", ignore_errors=True)

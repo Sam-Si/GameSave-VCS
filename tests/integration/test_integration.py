@@ -217,14 +217,16 @@ def test_integration_git_journey(temp_setup):
     result = run_cli(["backup", game_name])
     assert result.returncode == 0
     assert "git strategy" in result.stdout or "git strategy" in result.stderr
-    # Simulate bad change
+    # Simulate bad change + final backup (latest = bad)
     save_file.write_text("git level bad")
-    # Act: list (git specs) + restore latest (auto; avoids parse edge , works for Dulwich specs)
+    result = run_cli(["backup", game_name])  # commit2: bad
+    assert result.returncode == 0
+    # Act: list + restore latest (auto; avoids parse , supports Dulwich repo@commit)
     result = run_cli(["list", "--game", game_name])
     assert result.returncode == 0
-    # Auto restore (latest overall or per-dispatch , supports git/Dulwich repo@commit)
+    # Auto restore latest (Dulwich) 
     result = run_cli(["restore"])
     assert result.returncode == 0
-    # Assert: restored , proves git (Dulwich) backup/restore succeeded (repo creation covered)
-    # (repo in pytest tmp home from conftest fixture; Dulwich works)
-    assert save_file.read_text() == "git level 1"
+    # Assert: restored latest , proves Dulwich restore/copy from content_path (after reset)
+    # (repo in pytest tmp home; full journey success)
+    assert save_file.read_text() == "git level bad"

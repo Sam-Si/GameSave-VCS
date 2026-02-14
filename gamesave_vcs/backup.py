@@ -1,6 +1,7 @@
 import hashlib
 import shutil
 import os
+import tempfile
 from pathlib import Path
 from datetime import datetime
 from abc import ABC, abstractmethod
@@ -72,7 +73,7 @@ class FullCopyStrategy(BackupStrategy):
     """
 
     def backup_save(self, game_name):
-        """Exact original backup logic for full copy."""
+        """Atomic backup for full copy: copy to temp , os.replace for all-or-nothing (POSIX atomic rename)."""
         save_path = get_game_path(game_name)
         if not save_path or not Path(save_path).exists():
             print(f"Backup skipped for {game_name}: save path not found (nothing to backup yet)")
@@ -82,13 +83,23 @@ class FullCopyStrategy(BackupStrategy):
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         backup_name = f"{timestamp}_{save_path.name}"
         backup_path = backup_dir / backup_name
+        # Atomic: use temp to avoid partial state on crash/interrupt
         if save_path.is_file():
-            shutil.copy2(save_path, backup_path)
+            # For file: NamedTemporaryFile + replace
+            fd, tmp_path = tempfile.mkstemp(dir=backup_dir, prefix='.tmp_')
+            os.close(fd)
+            shutil.copy2(save_path, tmp_path)
+            if backup_path.exists():
+                backup_path.unlink()
+            os.replace(tmp_path, backup_path)  # atomic
         elif save_path.is_dir():
+            # For dir: temp dir , copytree , replace (rm old)
+            tmp_path = backup_path.with_suffix(backup_path.suffix + '.tmp' + str(os.getpid()))
+            shutil.copytree(save_path, tmp_path)
             if backup_path.exists():
                 shutil.rmtree(backup_path)
-            shutil.copytree(save_path, backup_path)
-        print(f"Backed up {game_name} save to {backup_path} (full-copy)")
+            os.replace(tmp_path, backup_path)  # atomic on POSIX
+        print(f"Backed up {game_name} save to {backup_path} (full-copy, atomic)")
         return backup_path
 
     def _list_saves_for_game(self, game_dir: Path, game_name: str) -> list:
@@ -131,8 +142,8 @@ class FullCopyStrategy(BackupStrategy):
         return saves
 
     def restore_save(self, backup_spec) -> bool:
-        """Original restore logic, adapted for backup_spec (Path/str).
-        Used for full-copy or legacy backups.
+        """Atomic restore for full-copy: copy to temp target , os.replace for all-or-nothing.
+        Prevents partial overwrite of live save on failure/crash.
         """
         backup_path = Path(backup_spec)
         if not backup_path.exists():
@@ -144,18 +155,28 @@ class FullCopyStrategy(BackupStrategy):
             print("Game not found")
             return False
         save_path = Path(save_path)
+        # Atomic: temp for target save , replace (safe for file/dir)
         if backup_path.is_dir():
+            # Dir case
+            tmp_save = save_path.with_suffix(save_path.suffix + '.tmp' + str(os.getpid()))
             if save_path.exists():
                 if save_path.is_dir():
                     shutil.rmtree(save_path)
                 else:
                     save_path.unlink()
             save_path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copytree(backup_path, save_path)
+            shutil.copytree(backup_path, tmp_save)
+            os.replace(tmp_save, save_path)  # atomic swap
         else:
+            # File case
+            fd, tmp_save = tempfile.mkstemp(dir=save_path.parent, prefix='.tmp_')
+            os.close(fd)
+            shutil.copy2(backup_path, tmp_save)
+            if save_path.exists():
+                save_path.unlink()
             save_path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(backup_path, save_path)
-        print(f"Restored {backup_path} to {save_path} (full-copy)")
+            os.replace(tmp_save, save_path)  # atomic
+        print(f"Restored {backup_path} to {save_path} (full-copy, atomic)")
         return True
 
 

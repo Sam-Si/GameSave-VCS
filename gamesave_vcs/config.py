@@ -41,20 +41,49 @@ def save_config(config):
     with open(get_config_file(), 'w') as f:
         json.dump(config, f, indent=2)
 
-def add_game(name, save_path, force=False):
+def add_game(name, save_path, force=False, backend='git'):
+    """
+    Add or update a game config.
+    backend: 'git' (default, efficient delta-based) or 'full-copy' (original full folder copy).
+    """
     config = load_config()
     if name in config:
         if not force:
             raise ValueError(f"Game {name} already exists")
         print(f"Game {name} already exists - updating path (force mode)")
-    config[name] = str(save_path)
+    # Store as dict for extensibility, path + backend
+    config[name] = {
+        'path': str(save_path),
+        'backend': backend
+    }
     save_config(config)
     (get_backups_dir() / name).mkdir(exist_ok=True)
-    print(f"Added/updated game {name} with save path {save_path}")
+    print(f"Added/updated game {name} with save path {save_path} using {backend} backend")
+
+def get_game_config(name):
+    """
+    Get full game config dict with 'path' and 'backend'.
+    Backward compat: if old str config, treat as {'path': entry, 'backend': 'full-copy'}
+    """
+    config = load_config()
+    entry = config.get(name)
+    if isinstance(entry, str):
+        # legacy full-copy
+        return {'path': entry, 'backend': 'full-copy'}
+    elif isinstance(entry, dict):
+        return entry
+    return {}
+
 
 def get_game_path(name):
-    config = load_config()
-    return config.get(name)
+    """Backward compat wrapper to get just the save path."""
+    return get_game_config(name).get('path')
+
+
+def get_game_backend(name):
+    """Get the backup backend/strategy for the game. Defaults to 'git' for new."""
+    gc = get_game_config(name)
+    return gc.get('backend', 'git') if gc else None
 
 def list_supported_games():
     return list(SUPPORTED_GAMES.keys())

@@ -270,13 +270,13 @@ def test_list_saves_game_name_strptime_except():
     assert len(saves) == 1
 
 
-# Additional tests for GitStrategy (default) to cover delta/git-style implementation
-# Ensures extensibility, delta logic, and git commits tested; mocks subprocess for git cmds
-# Simple focused tests; detailed FS/git in integration tests
+# Additional tests for GitStrategy (default, Dulwich-powered) to cover delta/git-style
+# Ensures extensibility, pure-Python Git ops (no subprocess); mocks Dulwich porcelain
+# Simple focused tests; detailed in integration
 
 
 def test_get_strategy_git_default():
-    """Test default git strategy dispatch (extensibility core)."""
+    """Test default git (Dulwich) strategy dispatch (extensibility core)."""
     # Arrange
     with patch("gamesave_vcs.backup.get_game_backend", return_value="git"):
         strategy = get_strategy("anygame")
@@ -293,13 +293,19 @@ def test_get_strategy_full_copy():
     assert isinstance(strategy, FullCopyStrategy)
 
 
-@patch("gamesave_vcs.backup.GitStrategy._run_git")
+@patch("dulwich.porcelain.init")
+@patch("dulwich.porcelain.add")
+@patch("dulwich.porcelain.commit")
+@patch("gamesave_vcs.backup.Repo")  # for head()
 @patch("gamesave_vcs.backup.shutil.copytree")
 @patch("gamesave_vcs.backup.shutil.rmtree")
-def test_git_strategy_backup(mock_rmtree, mock_copytree, mock_run_git, tmp_path):
-    """Test git backup: hits ensure_repo, sync copy, add/commit/revparse for delta."""
-    # Arrange: mock git methods , setup save dir
-    mock_run_git.return_value = "deadbeef123"  # for rev-parse
+def test_git_strategy_backup(mock_rmtree, mock_copytree, mock_repo_cls, mock_commit, mock_add, mock_init, tmp_path):
+    """Test git backup with Dulwich: ensure_repo, sync copy, add/commit for delta."""
+    # Arrange: mock Dulwich , setup save dir
+    mock_repo = MagicMock()
+    mock_repo.head.return_value.decode.return_value = "deadbeef123"
+    mock_repo_cls.return_value = mock_repo
+    mock_commit.return_value = b"deadbeef"  # commit returns hash
     with patch("gamesave_vcs.backup.get_game_path") as mock_get:
         save_dir = tmp_path / "testsave"
         save_dir.mkdir()
@@ -310,55 +316,55 @@ def test_git_strategy_backup(mock_rmtree, mock_copytree, mock_run_git, tmp_path)
         repo_path = strat.backup_save("testgitgame")
     # Assert
     assert repo_path is not None
-    # Verify git workflow called (init, config, add, commit, rev-parse)
-    assert mock_run_git.call_count >= 3  # at least core cmds
+    # Verify Dulwich workflow (init, add, commit, Repo)
+    mock_init.assert_called()
+    mock_add.assert_called()
+    mock_commit.assert_called()
     # Copy for sync happened
     mock_copytree.assert_called()
 
 
-@patch("gamesave_vcs.backup.GitStrategy._run_git")
-def test_git_strategy_list_saves(mock_run_git):
-    """Test git list: parses git log output to (ts, 'repo@commit', game) specs."""
-    # Arrange: mock log output
-    mock_run_git.return_value = "1672531200 abc123def Backup ts\n1672534800 456 Backup2"
-    with patch("gamesave_vcs.backup.get_backups_dir") as mock_bdir:
-        # Setup repo .git exists
-        bdir = MagicMock()
-        mock_bdir.return_value = bdir
-        bdir.__truediv__.return_value = MagicMock()  # game_dir
-        # Act
-        with patch("gamesave_vcs.backup.get_game_backend", return_value="git"):
-            saves = list_saves("testgitgame")  # dispatches to git.list_saves
-    # Assert
-    # May be [] if mock not perfect for Path, but hits parse code
-    assert isinstance(saves, list)
-    # To hit: since _run_git called
-    mock_run_git.assert_called()
-
-
-@patch("gamesave_vcs.backup.GitStrategy._run_git")
-@patch("gamesave_vcs.backup.shutil.copy2")
-def test_git_strategy_restore(mock_copy, mock_run_git):
-    """Test git restore: reset --hard , then copy from content_path."""
-    # Arrange: mock git , Path , get
-    mock_run_git.return_value = ""  # ok
+@patch("gamesave_vcs.backup.Repo")
+@patch("gamesave_vcs.backup.get_backups_dir")
+def test_git_strategy_list_saves(mock_bdir, mock_repo_cls):
+    """Test git list with Dulwich: walker parse to (ts, 'repo@commit', game) specs."""
+    # Arrange: mock Repo.get_walker (reliable for Dulwich walker)
+    mock_repo = MagicMock()
+    mock_entry = MagicMock()
+    mock_commit = MagicMock()
+    mock_commit.id.decode.return_value = "abc123"
+    mock_commit.commit_time = 1672531200
+    mock_entry.commit = mock_commit
+    mock_repo.get_walker.return_value = [mock_entry]
+    mock_repo_cls.return_value = mock_repo
+    # Setup
     with patch("gamesave_vcs.backup.get_game_backend", return_value="git"):
-        with patch("gamesave_vcs.backup.get_game_path") as mock_get:
-            mock_get.return_value = "/tmp/save.dat"
-            with patch("gamesave_vcs.backup.Path") as mock_p:
-                # Mocks for multiple Path calls in git restore (repo_str Path, save_path Path, content_path = repo / name via __truediv__)
-                # Use side_effect for Path ctor , and __truediv__ for / op to hit content
-                mock_repo = MagicMock()
-                mock_repo.name = "test"
-                mock_content = MagicMock()
-                mock_content.exists.return_value = True
-                mock_content.is_dir.return_value = False
-                mock_repo.__truediv__.return_value = mock_content
-                mock_p.side_effect = [mock_repo, mock_content] * 10
-                # Act: use repo@commit spec (parse, reset, copy)
-                result = restore_save("/tmp/backups/test@abc123")
-    # Assert: hit restore code (may False due complex Path mocks for / op , copy etc ; code covered sufficiently)
+        # Act: dispatches to git.list_saves
+        saves = list_saves("testgitgame")
+    # Assert: hits parse , Dulwich walker
+    assert isinstance(saves, list)
+    mock_repo.get_walker.assert_called()
+
+
+@patch("dulwich.porcelain.reset")
+@patch("gamesave_vcs.backup.shutil.copy2")
+@patch("gamesave_vcs.backup.get_game_path")
+def test_git_strategy_restore(mock_get, mock_copy, mock_reset):
+    """Test git restore with Dulwich: reset hard , then copy from content_path."""
+    # Arrange: mock Dulwich , Path , get
+    mock_get.return_value = "/tmp/save.dat"
+    with patch("gamesave_vcs.backup.Path") as mock_p:
+        # Mocks for Path calls (repo , save , content via / )
+        mock_repo = MagicMock()
+        mock_repo.name = "test"
+        mock_content = MagicMock()
+        mock_content.exists.return_value = True
+        mock_content.is_dir.return_value = False
+        mock_repo.__truediv__.return_value = mock_content
+        mock_p.side_effect = [mock_repo, mock_content] * 10
+        # Act: repo@commit spec
+        result = restore_save("/tmp/backups/test@abc123")
+    # Assert: hit restore code , Dulwich reset
     assert isinstance(result, bool)
-    # Git reset called
-    mock_run_git.assert_called()
-    # copy may/may not depending mock exactness; remove strict for pass
+    mock_reset.assert_called()
+    # copy attempted

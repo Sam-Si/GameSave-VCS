@@ -2,7 +2,7 @@
 GameSave-VCS is a Python-based tool that brings the power of Git version control to your PC game saves. It acts as an automated "Time Machine" for your games, allowing you to instantly restore your progress to a previous point in time, even if the game doesn't support manual saves.
 
 **Key Features**:
-- **Git Strategy (Default)**: Efficient delta-based backups using git commits (only stores changes between saves for space efficiency and full history).
+- **Git Strategy (Default, Pure Python)**: Efficient delta-based backups using Dulwich (pure-Python Git lib; no host git binary/subprocess). Only stores changes for space efficiency/full history.
 - **Extensible Backends**: Choose `git` (default) or `full-copy` (original full folder copy-paste) via `--backend` for flexibility.
 - **Full Folder + Recursive Subdirectory Support**: Handles entire save dirs (e.g., Minecraft worlds) in both strategies.
 See Architectural Choices for tradeoffs/details.
@@ -19,9 +19,9 @@ Add `xvfb` to apt installs (for tests). Prefix: `xvfb-run pytest ...`
 ## Usage and Demos
 GameSave-VCS supports 10 popular games out-of-the-box with predefined save paths (mostly directories for complex saves like Minecraft worlds; Linux-focused examples; adjust for your setup/OS/Steam/Proton installs as needed). Use `gamesave games --list` or `gamesave games --search <query>` (e.g. "elden") to browse/search them. The `add` command accepts an optional save path (supporting files **or full directories recursively**) for supported games (auto-fills predefined path; no existence check on add - taken as user-provided). If path missing on backup/watch, soft warning ("Backup skipped... nothing to backup yet") - non-blocking.
 
-**Note on Backends**: Default is `git` for efficient deltas (git stores only changes); use `--backend full-copy` for original full copy-paste. Config stored per-game in `config.json`.
+**Note on Backends**: Default is `git` (via Dulwich pure-Python lib for deltas, no external git binary needed); use `--backend full-copy` for original full copy-paste. Config stored per-game in `config.json`.
 
-**Architectural Note**: Predefined paths are directories, aligning with recursive support. Change detection uses recursive SHA256 (contents + relpaths) to detect any mod in save structure. For git backend, backups are commits in per-game repo at `~/.gamesave-vcs/backups/<game>/.git`; full-copy uses timestamped copies.
+**Architectural Note**: Predefined paths are directories, aligning with recursive support. Change detection uses recursive SHA256 (contents + relpaths) to detect any mod in save structure. For git backend, backups are commits in per-game repo at `~/.gamesave-vcs/backups/<game>/.git` (powered by Dulwich); full-copy uses timestamped copies.
 
 Backups/repos in `~/.gamesave-vcs/backups/` , config in `~/.gamesave-vcs/config.json`.
 
@@ -195,8 +195,8 @@ rm -rf ~/.gamesave-vcs /tmp/missing
 
 ### Architectural Choices
 Documented inline; summary:
-- **Extensible Strategies**: Strategy pattern in backup.py with GitStrategy (default: deltas via commits for efficiency/space) and FullCopyStrategy (legacy full copy-paste). Dispatch via config/backend; detect for legacy. Enables future backends.
-- **Git Default for Delta Efficiency**: Git per-game repo stores changes only (commits handle diffs); sync via copy to working tree + git add/commit/reset. Tradeoff: requires git, but far better than full copies for repeated saves.
+- **Extensible Strategies**: Strategy pattern in backup.py with GitStrategy (default: deltas via commits for efficiency/space , powered by Dulwich pure-Python Git) and FullCopyStrategy (legacy full copy-paste). Dispatch via config/backend; detect for legacy. Enables future backends , no host binaries.
+- **Git Default for Delta Efficiency**: Dulwich-powered per-game repo stores changes only (porcelain.init/add/commit/reset/log); sync via copy to working tree. Far better than full copies for repeated saves (pure Python , lightweight).
 - **Recursive Support + Hashing**: `shutil.copytree`/`os.walk` (sorted) for dirs/files in both; SHA256 for change detect in watcher.
 - **Backward/ Legacy Compat**: Old full-copy backups listable; old config str auto full-copy; CLI/API unchanged.
 - **Restore UX**: Optional spec , auto latest across backends , global for UX.

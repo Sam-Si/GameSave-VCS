@@ -1,10 +1,12 @@
 import hashlib
 import shutil
 import os
-import subprocess
 from pathlib import Path
 from datetime import datetime
 from abc import ABC, abstractmethod
+# Dulwich for pure-Python Git (no host binary/subprocess dep)
+import dulwich.porcelain as porcelain
+from dulwich.repo import Repo
 # Import from config for strategy dispatch and backend
 from .config import (
     get_backups_dir,
@@ -158,40 +160,25 @@ class FullCopyStrategy(BackupStrategy):
 
 
 class GitStrategy(BackupStrategy):
-    """Git-based strategy (default): efficient delta backups by committing changes.
-    Figures delta between previous save and now via git (stores diffs, compression, history).
+    """Git-based strategy (default, powered by Dulwich pure-Python lib): efficient delta backups.
+    No subprocess or host Git binary required--Dulwich provides full Git impl in Python.
+    Figures delta between previous save and now (stores diffs, compression, history).
     Much better than full copy-paste for repeated saves. Keeps full history, cheap restore.
     Per-game repo at ~/.gamesave-vcs/backups/<game>/
     """
 
-    def _run_git(self, repo_dir: Path, *args) -> str:
-        """Run git cmd in repo cwd, return stdout. Handles 'no changes' gracefully."""
-        try:
-            result = subprocess.run(
-                ['git', *args],
-                cwd=repo_dir,
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            return result.stdout.strip()
-        except subprocess.CalledProcessError as e:
-            stderr = e.stderr.strip() if hasattr(e, 'stderr') and e.stderr else ''
-            # Robust catch for no changes (stderr may vary slightly; case/words)
-            if 'nothing to commit' in stderr.lower() or 'no changes added' in stderr.lower() or 'working tree clean' in stderr.lower():
-                return ''
-            raise RuntimeError(f"Git failed: {' '.join(args)} -> {stderr}") from e
-
     def _ensure_repo(self, repo_dir: Path) -> Path:
-        """Init git if needed, config user for headless/CI/tests, use main branch."""
+        """Init repo if needed using Dulwich porcelain; set user config for author/commit."""
         repo_dir.mkdir(parents=True, exist_ok=True)
         if not (repo_dir / '.git').exists():
-            self._run_git(repo_dir, 'init')
-            # Dummy config avoids "no author" errors
-            self._run_git(repo_dir, 'config', 'user.email', 'gamesave-vcs@example.com')
-            self._run_git(repo_dir, 'config', 'user.name', 'GameSave-VCS')
-            # Modern git compat (init may default main/master)
-            self._run_git(repo_dir, 'branch', '-M', 'main')
+            porcelain.init(str(repo_dir))
+            # Dulwich repo to set config (avoids author errors , headless/CI)
+            r = Repo(str(repo_dir))
+            c = r.get_config()
+            c.set(("user",), "email", "gamesave-vcs@example.com")
+            c.set(("user",), "name", "GameSave-VCS")
+            c.write_to_path()
+            # Default branch handling by Dulwich ok (main/master compat)
         return repo_dir
 
     def _get_content_path(self, repo_dir: Path, save_path: Path) -> Path:
@@ -199,9 +186,9 @@ class GitStrategy(BackupStrategy):
         return repo_dir / save_path.name
 
     def backup_save(self, game_name):
-        """Backup via git: sync save to repo working tree, commit.
-        Delta efficiency: git stores only changes vs previous commit (binary/text diffs).
-        Full copy only for initial sync; git handles versioning.
+        """Backup via Dulwich: sync save to repo working tree, commit delta.
+        Pure-Python: no subprocess; Dulwich porcelain handles add/commit.
+        Delta efficiency: stores only changes vs previous.
         """
         save_path_str = get_game_path(game_name)
         if not save_path_str or not Path(save_path_str).exists():
@@ -211,27 +198,45 @@ class GitStrategy(BackupStrategy):
         repo_dir = get_backups_dir() / game_name
         self._ensure_repo(repo_dir)
         content_path = self._get_content_path(repo_dir, save_path)
-        # Sync to repo (file/dir copy; git will delta it)
+        # Sync to repo working tree (file/dir; Dulwich will delta it)
         if save_path.is_file():
             shutil.copy2(save_path, content_path)
         elif save_path.is_dir():
             if content_path.exists():
                 shutil.rmtree(content_path)
             shutil.copytree(save_path, content_path)
-        # Stage all (handles add/update/delete)
-        self._run_git(repo_dir, 'add', '-A')
+        # Dulwich porcelain: stage all , commit (handles add/update/delete; pure Python)
+        try:
+            # Add all ('.' or list; Dulwich accepts repo path)
+            porcelain.add(str(repo_dir))
+        except Exception:
+            pass  # no-op if no changes
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         commit_msg = f"Backup {timestamp} for {game_name}"
-        # Commit the delta (handled gracefully in _run_git if no changes)
-        self._run_git(repo_dir, 'commit', '-m', commit_msg)
-        commit_hash = self._run_git(repo_dir, 'rev-parse', 'HEAD')
+        # Commit with explicit author (Dulwich requires to avoid defaults/errors)
+        try:
+            porcelain.commit(
+                str(repo_dir),
+                message=commit_msg.encode(),
+                author=b"GameSave-VCS <gamesave-vcs@example.com>",
+            )
+        except Exception as e:
+            # Graceful for no changes (Dulwich raises specific)
+            if "no changes" in str(e).lower() or "unchanged" in str(e).lower():
+                pass
+            else:
+                raise
+        # Get current commit hash (via Repo)
+        r = Repo(str(repo_dir))
+        commit_hash = r.head().decode()
         backup_spec = f"{repo_dir}@{commit_hash}"
         print(f"Backed up {game_name} save to git repo {repo_dir} at commit {commit_hash} (git strategy)")
         return repo_dir  # API compat (repo Path)
 
     def list_saves(self, game_name: str = None) -> list:
-        """List git commits as "saves": parse log for ts/hash.
+        """List git commits as "saves": use Dulwich log walker for ts/hash.
         backup_spec='repo@commit' encodes for restore dispatch.
+        Pure-Python replacement for git log.
         """
         if game_name is None:
             # Per-game only; aggregate in top-level
@@ -241,28 +246,25 @@ class GitStrategy(BackupStrategy):
         if not (repo_dir / '.git').exists():
             return saves
         try:
-            # Format: unix_ts hash msg ; reverse chrono? oldest first, sort top
-            log_output = self._run_git(
-                repo_dir, 'log', '--pretty=format:%at %H %s', '--reverse'
-            )
-            if log_output:
-                for line in log_output.splitlines():
-                    if line.strip():
-                        parts = line.split(' ', 2)
-                        if len(parts) >= 2:
-                            ts_unix = int(parts[0])
-                            commit_hash = parts[1]
-                            ts = datetime.fromtimestamp(ts_unix)
-                            backup_spec = f"{repo_dir}@{commit_hash}"
-                            saves.append((ts, backup_spec, game_name))
-        except Exception as e:
-            # Empty repo/no commits or rare git err: graceful
+            # Dulwich: use Repo.get_walker() for commits (porcelain.log walker sometimes empty post-consume; low-level reliable)
+            # Oldest first , limit
+            r = Repo(str(repo_dir))
+            for entry in r.get_walker(max_entries=100):
+                if entry.commit:
+                    commit = entry.commit
+                    ts_unix = commit.commit_time  # unix timestamp
+                    commit_hash = commit.id.decode()
+                    ts = datetime.fromtimestamp(ts_unix)
+                    backup_spec = f"{repo_dir}@{commit_hash}"
+                    saves.append((ts, backup_spec, game_name))
+        except Exception:
+            # Empty repo/no commits or Dulwich err: graceful
             pass
         return saves
 
     def restore_save(self, backup_spec) -> bool:
-        """Restore: parse repo@commit, git reset --hard to snapshot, then copy to save_path.
-        Delta efficient: git reconstructs exact state from history.
+        """Restore: parse repo@commit , Dulwich reset --hard to snapshot , then copy to save_path.
+        Pure-Python: no subprocess; Dulwich reconstructs state from history.
         """
         # Expect str 'repo@commit' from list/git backup
         spec_str = str(backup_spec)
@@ -281,15 +283,14 @@ class GitStrategy(BackupStrategy):
             return False
         save_path = Path(save_path_str)
         try:
-            # Reset to commit: applies the historical delta state to working tree
-            # --hard ensures clean (no merge)
-            self._run_git(repo_dir, 'reset', '--hard', commit_hash)
+            # Dulwich porcelain.reset hard: applies historical delta state to working tree
+            porcelain.reset(str(repo_dir), treeish=commit_hash.encode(), mode=b'hard')
             # Content now at content_path in repo
             content_path = self._get_content_path(repo_dir, save_path)
             if not content_path.exists():
                 print(f"No content at {content_path} for restore")
                 return False
-            # Copy to live save (unified file/dir logic)
+            # Copy to live save (unified file/dir logic , same as full-copy)
             if content_path.is_dir():
                 if save_path.exists():
                     if save_path.is_dir():

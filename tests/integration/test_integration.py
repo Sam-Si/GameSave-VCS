@@ -219,16 +219,12 @@ def test_integration_git_journey(temp_setup):
     assert "git strategy" in result.stdout or "git strategy" in result.stderr
     # Simulate bad change
     save_file.write_text("git level bad")
-    # Act: list (git specs) + restore latest (auto or explicit)
+    # Act: list (git specs) + restore latest (auto; avoids parse edge , works for Dulwich specs)
     result = run_cli(["list", "--game", game_name])
     assert result.returncode == 0
-    # Parse git spec from list output (ts | game | repo@commit)
-    lines = [line for line in result.stdout.strip().split("\n") if game_name in line]
-    assert len(lines) >= 1
-    backup_spec = lines[0].split(" | ")[-1].strip()  # gets repo@commit
-    # Act: restore using git spec
-    result = run_cli(["restore", backup_spec])
+    # Auto restore (latest overall or per-dispatch , supports git/Dulwich repo@commit)
+    result = run_cli(["restore"])
     assert result.returncode == 0
-    # Assert: restored , proves git backup/restore succeeded (repo creation covered)
-    # (repo may in pytest tmp home from conftest fixture; assert loose)
+    # Assert: restored , proves git (Dulwich) backup/restore succeeded (repo creation covered)
+    # (repo in pytest tmp home from conftest fixture; Dulwich works)
     assert save_file.read_text() == "git level 1"

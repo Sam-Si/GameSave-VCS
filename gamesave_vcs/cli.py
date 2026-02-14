@@ -19,7 +19,7 @@ def main():
         '--backend',
         choices=['git', 'full-copy'],
         default='git',
-        help='Backup strategy: git (default, efficient delta-based VCS) or full-copy (original full folder copy-paste)',
+        help='Backup strategy: git (default, efficient delta-based VCS via pure-Python Dulwich) or full-copy (original full folder copy-paste)',
     )
 
     watch_parser = subparsers.add_parser('watch', help='Start watcher for a game')

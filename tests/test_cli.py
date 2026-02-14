@@ -92,9 +92,12 @@ def test_cli_games_search():
             with patch("sys.argv", ["cli", "games", "--search", "mine"]):
                 main()
 
-def test_cli_games_no_args():
+def test_cli_games_no_args(capsys):
+    # Test missed branch: games no --list/--search , hits print "Use --list or --search"
     with patch("sys.argv", ["cli", "games"]):
         main()
+    captured = capsys.readouterr()
+    assert "Use --list or --search" in captured.out
 
 def test_cli_add_supported(capsys):
     with patch("gamesave_vcs.cli.get_supported_game_path") as mock_get:

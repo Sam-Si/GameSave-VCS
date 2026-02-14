@@ -16,11 +16,11 @@ def test_cli_help():
 def test_cli_add():
     # Arrange
     with patch("gamesave_vcs.cli.add_game") as mock_add:
-        # Act
+        # Act: default backend=git
         with patch("sys.argv", ["cli", "add", "testgame", "/tmp/save.dat"]):
             main()
     # Assert
-    mock_add.assert_called_with("testgame", "/tmp/save.dat", force=False)
+    mock_add.assert_called_with("testgame", "/tmp/save.dat", force=False, backend="git")
 
 def test_cli_watch():
     # Arrange (pure mocks, no thread/infinite loop)
@@ -92,9 +92,12 @@ def test_cli_games_search():
             with patch("sys.argv", ["cli", "games", "--search", "mine"]):
                 main()
 
-def test_cli_games_no_args():
+def test_cli_games_no_args(capsys):
+    # Test missed branch: games no --list/--search , hits print "Use --list or --search"
     with patch("sys.argv", ["cli", "games"]):
         main()
+    captured = capsys.readouterr()
+    assert "Use --list or --search" in captured.out
 
 def test_cli_add_supported(capsys):
     with patch("gamesave_vcs.cli.get_supported_game_path") as mock_get:
@@ -104,17 +107,28 @@ def test_cli_add_supported(capsys):
             with patch("gamesave_vcs.cli.add_game") as mock_add:  # still mock to avoid real FS/config
                 with patch("sys.argv", ["cli", "add", "Minecraft"]):
                     main()
-    mock_add.assert_called_with("Minecraft", "~/.minecraft/saves/", force=False)
+    # Default backend=git
+    mock_add.assert_called_with("Minecraft", "~/.minecraft/saves/", force=False, backend="git")
     captured = capsys.readouterr()
     assert "Using suggested path for Minecraft" in captured.out
 
 def test_cli_add_force(capsys):
+    # Test --force + default backend
     with patch("gamesave_vcs.cli.add_game") as mock_add:
         with patch("sys.argv", ["cli", "add", "mygame", "/new/path", "--force"]):
             main()
-    mock_add.assert_called_with("mygame", "/new/path", force=True)
+    mock_add.assert_called_with("mygame", "/new/path", force=True, backend="git")
     captured = capsys.readouterr()
     # Force handled in add_game
+
+
+def test_cli_add_backend(capsys):
+    # Test --backend option
+    with patch("gamesave_vcs.cli.add_game") as mock_add:
+        with patch("sys.argv", ["cli", "add", "mygame", "/path", "--backend", "full-copy"]):
+            main()
+    mock_add.assert_called_with("mygame", "/path", force=False, backend="full-copy")
+    # No capsys needed , call verified
 
 def test_cli_add_unsupported_no_path(capsys):
     with patch("gamesave_vcs.cli.get_supported_game_path") as mock_get:

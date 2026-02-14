@@ -5,13 +5,22 @@ from .backup import backup_save, list_saves, restore_save
 from .watcher import GameWatcher
 
 def main():
-    parser = argparse.ArgumentParser(description='GameSave-VCS: Version control for game saves')
+    parser = argparse.ArgumentParser(
+        description='GameSave-VCS: Version control for game saves '
+        '(git strategy default for efficient deltas; --backend=full-copy for original)'
+    )
     subparsers = parser.add_subparsers(dest='command', required=True)
 
     add_parser = subparsers.add_parser('add', help='Add a game to watch')
     add_parser.add_argument('name', help='Game name')
     add_parser.add_argument('path', nargs='?', help='Path to save file or directory (optional for supported games)')
     add_parser.add_argument('--force', action='store_true', help='Update existing game path if already added')
+    add_parser.add_argument(
+        '--backend',
+        choices=['git', 'full-copy'],
+        default='git',
+        help='Backup strategy: git (default, efficient delta-based VCS via pure-Python Dulwich) or full-copy (original full folder copy-paste)',
+    )
 
     watch_parser = subparsers.add_parser('watch', help='Start watcher for a game')
     watch_parser.add_argument('name', help='Game name')
@@ -25,7 +34,12 @@ def main():
     games_parser.add_argument('--search', help='Search for games by name')
 
     restore_parser = subparsers.add_parser('restore', help='Restore a save')
-    restore_parser.add_argument('backup_path', nargs='?', help='Path to backup (file or directory) to restore; omitted = latest overall')
+    restore_parser.add_argument(
+        'backup_path',
+        nargs='?',
+        help='Backup spec to restore (path for full-copy or repo@commit for git); '
+        'omitted = latest overall (across backends)',
+    )
 
     backup_parser = subparsers.add_parser('backup', help='Manually backup a game')
     backup_parser.add_argument('name', help='Game name')
@@ -42,7 +56,13 @@ def main():
             else:
                 print("Path required for unsupported games")
                 return
-        add_game(args.name, path, force=getattr(args, 'force', False))
+        # Pass backend (default git for delta efficiency; full-copy for old style)
+        add_game(
+            args.name,
+            path,
+            force=getattr(args, 'force', False),
+            backend=getattr(args, 'backend', 'git'),
+        )
     elif args.command == 'watch':
         watcher = GameWatcher(args.name, args.interval)
         watcher.start()

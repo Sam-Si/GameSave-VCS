@@ -1,7 +1,18 @@
 import pytest
 from pathlib import Path
 from unittest.mock import patch, MagicMock
-from gamesave_vcs.config import add_game, get_game_path, load_config, save_config, ensure_dirs, list_supported_games, search_games, get_supported_game_path
+from gamesave_vcs.config import (
+    add_game,
+    get_game_path,
+    get_game_config,
+    get_game_backend,
+    load_config,
+    save_config,
+    ensure_dirs,
+    list_supported_games,
+    search_games,
+    get_supported_game_path,
+)
 
 def test_dirs_created():
     # Arrange
@@ -39,12 +50,13 @@ def test_add_game(capsys):
         mock_load.return_value = {}
         with patch("gamesave_vcs.config.save_config") as mock_save:
             with patch("gamesave_vcs.config.get_backups_dir") as mock_backups:
-                # Act
+                # Act: default backend=git
                 add_game("testgame", "/tmp/save.dat")
     # Assert
     mock_save.assert_called()
     captured = capsys.readouterr()
     assert "Added/updated game testgame" in captured.out
+    assert "using git backend" in captured.out
 
 def test_add_game_duplicate():
     # Arrange
@@ -60,21 +72,27 @@ def test_add_game_force_update(capsys):
         mock_load.return_value = {"testgame": "/old/path"}
         with patch("gamesave_vcs.config.save_config") as mock_save:
             with patch("gamesave_vcs.config.get_backups_dir") as mock_backups:
-                # Act
-                add_game("testgame", "/new/path", force=True)
+                # Act: force update , specify backend
+                add_game("testgame", "/new/path", force=True, backend="full-copy")
     # Assert
     mock_save.assert_called()
     captured = capsys.readouterr()
     assert "updating path (force mode)" in captured.out
     assert "Added/updated game testgame" in captured.out
+    assert "using full-copy backend" in captured.out
 
 def test_get_game_path():
-    # Arrange
+    # Arrange: test legacy str compat + new dict
     with patch("gamesave_vcs.config.load_config") as mock_load:
+        # Legacy str
         mock_load.return_value = {"testgame": "/tmp/save.dat"}
         # Act + Assert
         assert get_game_path("testgame") == "/tmp/save.dat"
         assert get_game_path("missing") is None
+    # New dict config
+    with patch("gamesave_vcs.config.load_config") as mock_load:
+        mock_load.return_value = {"testgame": {"path": "/new/path", "backend": "git"}}
+        assert get_game_path("testgame") == "/new/path"
 
 def test_list_supported_games():
     games = list_supported_games()
@@ -109,3 +127,29 @@ def test_save_config(capsys):
     mock_json.assert_called()
     captured = capsys.readouterr()
     # no output but covers lines 40-42
+
+
+# New tests for backend/config extensibility + backward compat
+def test_get_game_config():
+    """Test full config dict , legacy str compat."""
+    # Arrange legacy
+    with patch("gamesave_vcs.config.load_config", return_value={"leg": "/old/path"}):
+        cfg = get_game_config("leg")
+        assert cfg == {"path": "/old/path", "backend": "full-copy"}
+    # New dict
+    with patch("gamesave_vcs.config.load_config", return_value={"newg": {"path": "/p", "backend": "git"}}):
+        cfg = get_game_config("newg")
+        assert cfg["backend"] == "git"
+
+
+def test_get_game_backend():
+    """Test backend getter , default git , legacy full-copy."""
+    # legacy
+    with patch("gamesave_vcs.config.load_config", return_value={"old": "/p"}):
+        assert get_game_backend("old") == "full-copy"
+    # new
+    with patch("gamesave_vcs.config.load_config", return_value={"g": {"path": "/p", "backend": "full-copy"}}):
+        assert get_game_backend("g") == "full-copy"
+    # missing
+    with patch("gamesave_vcs.config.load_config", return_value={}):
+        assert get_game_backend("missing") is None

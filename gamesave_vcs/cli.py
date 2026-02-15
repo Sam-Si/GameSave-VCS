@@ -4,16 +4,17 @@ from argparse import Namespace
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Union
+
 # Local imports (types inferred from typed modules where possible)
 from .backup import backup_save, list_saves, restore_save
 from .config import (
     add_game,
-    get_game_path,
     get_supported_game_path,
     list_supported_games,
     search_games,
 )
 from .watcher import GameWatcher
+
 
 def main() -> None:
     """CLI entrypoint: parse args and dispatch to commands (add/watch/list/etc).
@@ -44,7 +45,9 @@ def main() -> None:
         help="Backup strategy: git (default, efficient delta-based VCS via pure-Python Dulwich) or full-copy (original full folder copy-paste)",
     )
 
-    watch_parser = subparsers.add_parser("watch", help="Start watcher for a game")
+    watch_parser = subparsers.add_parser(
+        "watch", help="Start watcher for a game"
+    )
     watch_parser.add_argument("name", help="Game name")
     watch_parser.add_argument(
         "--interval",
@@ -56,7 +59,9 @@ def main() -> None:
     list_parser = subparsers.add_parser("list", help="List all saves")
     list_parser.add_argument("--game", help="Filter by game name")
 
-    games_parser = subparsers.add_parser("games", help="List or search supported games")
+    games_parser = subparsers.add_parser(
+        "games", help="List or search supported games"
+    )
     games_parser.add_argument(
         "--list", action="store_true", help="List all supported games"
     )
@@ -70,7 +75,9 @@ def main() -> None:
         "omitted = latest overall (across backends)",
     )
 
-    backup_parser = subparsers.add_parser("backup", help="Manually backup a game")
+    backup_parser = subparsers.add_parser(
+        "backup", help="Manually backup a game"
+    )
     backup_parser.add_argument("name", help="Game name")
 
     args: Namespace = parser.parse_args()
@@ -104,7 +111,9 @@ def main() -> None:
             watcher.stop()
     elif args.command == "list":
         # list_saves returns typed list of tuples from backup; backup_spec can be Path|str
-        saves: List[tuple[datetime, Union[Path, str], str]] = list_saves(args.game)
+        saves: List[tuple[datetime, Union[Path, str], str]] = list_saves(
+            args.game
+        )
         for ts, backup_spec, game in saves:
             print(f"{ts} | {game} | {backup_spec}")
     elif args.command == "games":
@@ -120,7 +129,9 @@ def main() -> None:
             if results:
                 for game in results:
                     # avoid shadowing
-                    suggested_path: Optional[str] = get_supported_game_path(game)
+                    suggested_path: Optional[str] = get_supported_game_path(
+                        game
+                    )
                     print(f"{game} - Suggested save path: {suggested_path}")
             else:
                 print("No matching games found")
@@ -132,6 +143,7 @@ def main() -> None:
     elif args.command == "backup":
         # name: str
         backup_save(args.name)
+
 
 if __name__ == "__main__":
     main()

@@ -15,17 +15,21 @@ SUPPORTED_GAMES: Dict[str, str] = {
     "Doom Eternal": "~/.local/share/id Software/DOOM Eternal/",
 }
 
+
 def get_base_dir() -> Path:
     """Return the base directory for GameSave-VCS data (~/.gamesave-vcs)."""
-    return Path.home() / '.gamesave-vcs'
+    return Path.home() / ".gamesave-vcs"
+
 
 def get_config_file() -> Path:
     """Return path to the config.json file."""
-    return get_base_dir() / 'config.json'
+    return get_base_dir() / "config.json"
+
 
 def get_backups_dir() -> Path:
     """Return path to the backups directory."""
-    return get_base_dir() / 'backups'
+    return get_base_dir() / "backups"
+
 
 def ensure_dirs() -> None:
     """Ensure base and backups directories exist."""
@@ -33,20 +37,23 @@ def ensure_dirs() -> None:
     base.mkdir(parents=True, exist_ok=True)
     get_backups_dir().mkdir(parents=True, exist_ok=True)
 
+
 def load_config() -> Dict[str, Any]:
     """Load game config from JSON file. Returns empty dict if no config."""
     ensure_dirs()
     config_file = get_config_file()
     if config_file.exists():
-        with open(config_file, 'r') as f:
+        with open(config_file, "r") as f:
             return json.load(f)
     return {}
+
 
 def save_config(config: Dict[str, Any]) -> None:
     """Save config dict to JSON file."""
     ensure_dirs()
-    with open(get_config_file(), 'w') as f:
+    with open(get_config_file(), "w") as f:
         json.dump(config, f, indent=2)
+
 
 def add_game(
     name: str, save_path: str | Path, force: bool = False, backend: str = "git"
@@ -67,7 +74,10 @@ def add_game(
     }
     save_config(config)
     (get_backups_dir() / name).mkdir(exist_ok=True)
-    print(f"Added/updated game {name} with save path {save_path} using {backend} backend")
+    print(
+        f"Added/updated game {name} with save path {save_path} using {backend} backend"
+    )
+
 
 def get_game_config(name: str) -> Dict[str, Any]:
     """
@@ -94,14 +104,17 @@ def get_game_backend(name: str) -> Optional[str]:
     gc = get_game_config(name)
     return gc.get("backend", "git") if gc else None
 
+
 def list_supported_games() -> List[str]:
     """Return list of supported game names."""
     return list(SUPPORTED_GAMES.keys())
+
 
 def search_games(query: str) -> List[str]:
     """Search supported games by substring (case-insensitive)."""
     query = query.lower()
     return [game for game in SUPPORTED_GAMES if query in game.lower()]
+
 
 def get_supported_game_path(game_name: str) -> Optional[str]:
     """Get predefined save path for a supported game, or None if unknown."""

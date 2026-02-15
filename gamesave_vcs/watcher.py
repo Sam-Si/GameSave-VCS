@@ -2,9 +2,11 @@ import threading
 import time
 from pathlib import Path
 from typing import Optional
+
 # Local
 from .backup import backup_save, get_save_hash
 from .config import get_game_path
+
 
 class GameWatcher:
     """Watcher for game save changes using polling + hash diff; triggers backup."""
@@ -24,9 +26,7 @@ class GameWatcher:
             print("Game not found")
             return
         self.running = True
-        self.thread = threading.Thread(
-            target=self._watch_loop, daemon=True
-        )
+        self.thread = threading.Thread(target=self._watch_loop, daemon=True)
         self.thread.start()
         print(f"Started watcher for {self.game_name}")
 

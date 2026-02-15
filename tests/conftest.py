@@ -1,8 +1,10 @@
-import pytest
 import shutil
 from collections.abc import Generator
 from pathlib import Path
+
+import pytest
 from pytest import MonkeyPatch
+
 
 @pytest.fixture(autouse=True)
 def clean_config(

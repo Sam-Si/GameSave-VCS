@@ -1,6 +1,9 @@
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock
+
 from gamesave_vcs.watcher import GameWatcher
+
 
 def test_watcher_init():
     # Arrange
@@ -13,6 +16,7 @@ def test_watcher_init():
     assert watcher.interval == 5
     assert watcher.save_path == "/tmp/save.dat"
 
+
 def test_watcher_start_missing_game(capsys):
     # Arrange
     watcher = GameWatcher("missing")
@@ -21,6 +25,7 @@ def test_watcher_start_missing_game(capsys):
     # Assert
     captured = capsys.readouterr()
     assert "Game not found" in captured.out
+
 
 @patch("gamesave_vcs.watcher.get_save_hash")
 @patch("gamesave_vcs.watcher.backup_save")
@@ -40,6 +45,7 @@ def test_watcher_change_detection(mock_backup, mock_hash):
     # Assert
     assert mock_backup.called
 
+
 def test_watcher_stop():
     # Arrange
     watcher = GameWatcher("testgame")
@@ -48,6 +54,7 @@ def test_watcher_stop():
     watcher.stop()
     # Assert
     assert not watcher.running
+
 
 def test_watcher_full_start_stop():
     # Arrange
@@ -59,6 +66,7 @@ def test_watcher_full_start_stop():
     watcher.stop()
     # Assert
     assert not watcher.running
+
 
 def test_watcher_loop_no_file():
     # Arrange
@@ -72,6 +80,7 @@ def test_watcher_loop_no_file():
             watcher._watch_loop = lambda: None  # no hang
             # Assert covered
             pass
+
 
 def test_watcher_loop_branches():
     # Arrange
@@ -90,6 +99,7 @@ def test_watcher_loop_branches():
     # Branches covered
     assert True
 
+
 def test_watcher_loop_full():
     # Arrange (hit lines 33,38-46)
     watcher = GameWatcher("testgame")
@@ -107,6 +117,7 @@ def test_watcher_loop_full():
                     watcher.last_hash = current
     # Assert
     assert watcher.last_hash == "new"
+
 
 def test_watcher_loop_exists_hash_backup():
     # Arrange (hit lines 33,38-46: exists True, hash, backup call)
@@ -127,6 +138,7 @@ def test_watcher_loop_exists_hash_backup():
     mock_backup.assert_called()
     assert watcher.last_hash == "new"
 
+
 def test_watcher_loop_none():
     # Arrange + Act: cover if save_path is None early return (line 33)
     watcher = GameWatcher("testgame")
@@ -135,6 +147,7 @@ def test_watcher_loop_none():
     watcher._watch_loop()  # no crash, early return
     # Assert: covered
 
+
 def test_watcher_loop_real(capsys):
     # Arrange: full loop body coverage (pre-exists, while/sleep, no-change, change+backup)
     with patch("gamesave_vcs.watcher.get_game_path") as mock_get:
@@ -142,15 +155,21 @@ def test_watcher_loop_real(capsys):
         watcher = GameWatcher("testgame")
     watcher.running = True
     call_count = [0]
+
     def stop_after_iters(*args):
         call_count[0] += 1
         if call_count[0] >= 2:  # stop after 2 iters
             watcher.running = False
         return None
+
     with patch("gamesave_vcs.watcher.Path") as mock_path:
         mock_path.return_value.exists.return_value = True
         with patch("gamesave_vcs.watcher.get_save_hash") as mock_hash:
-            mock_hash.side_effect = ["init", "same", "new"]  # pre-loop, no-change, change
+            mock_hash.side_effect = [
+                "init",
+                "same",
+                "new",
+            ]  # pre-loop, no-change, change
             with patch("gamesave_vcs.watcher.backup_save") as mock_backup:
                 with patch("gamesave_vcs.watcher.time.sleep") as mock_sleep:
                     mock_sleep.side_effect = stop_after_iters

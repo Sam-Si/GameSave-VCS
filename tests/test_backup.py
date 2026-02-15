@@ -60,15 +60,19 @@ def test_backup_save_dir(tmp_path):
             test_dir.mkdir()
             (test_dir / "data.txt").write_text("test")
             # no Path patch; use real Paths
+            # Add patches for os ops to prevent FS errors in dir case (tmp replace; test uses mock copytree so no real tmp)
             with patch("gamesave_vcs.backup.shutil.copytree") as mock_copytree:
                 with patch("gamesave_vcs.backup.shutil.rmtree") as mock_rmtree:
-                    # pre-create backup_path to hit exists if
-                    backup_dir = get_backups_dir() / "testgame"  # from config
-                    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-                    pre_backup = backup_dir / f"{timestamp}_testsave"
-                    pre_backup.mkdir(parents=True, exist_ok=True)
-                    # Act
-                    backup_path = backup_save("testgame")
+                    with patch("gamesave_vcs.backup.os.replace"):
+                        # pre-create backup_path to hit exists if
+                        backup_dir = get_backups_dir() / "testgame"  # from config
+                        # ensure for test (backup_dir mkdir already in impl now)
+                        backup_dir.mkdir(parents=True, exist_ok=True)
+                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        pre_backup = backup_dir / f"{timestamp}_testsave"
+                        pre_backup.mkdir(parents=True, exist_ok=True)
+                        # Act
+                        backup_path = backup_save("testgame")
     # Assert
     assert backup_path is not None
     mock_copytree.assert_called()
@@ -106,6 +110,7 @@ def test_list_saves():
 def test_restore_save():
     # Arrange: force full-copy strategy + spec to hit file copy2 branch
     # (git would require @spec and use different restore)
+    # Added patches for tempfile/os (mkstemp , close , replace , unlink) to avoid FS errors when Path mocked to MagicMock (common test pattern post-type refactor)
     with patch("gamesave_vcs.backup.get_game_backend", return_value="full-copy"):
         with patch("gamesave_vcs.backup.Path") as mock_path:
             mock_backup = MagicMock()
@@ -115,8 +120,15 @@ def test_restore_save():
             with patch("gamesave_vcs.backup.get_game_path") as mock_get:
                 mock_get.return_value = "/tmp/save.dat"
                 with patch("gamesave_vcs.backup.shutil.copy2") as mock_copy:
-                    # Act
-                    result = restore_save("/fake/backup")
+                    with patch(
+                        "gamesave_vcs.backup.tempfile.mkstemp"
+                    ) as mock_mkstemp:
+                        mock_mkstemp.return_value = (3, "/tmp/tmp_save")
+                        with patch("gamesave_vcs.backup.os.close"):
+                            with patch("gamesave_vcs.backup.os.replace"):
+                                with patch("gamesave_vcs.backup.os.unlink"):
+                                    # Act
+                                    result = restore_save("/fake/backup")
     # Assert
     assert result is True
     mock_copy.assert_called()
@@ -148,7 +160,15 @@ def test_restore_save_dir(tmp_path):
                 mock_get.return_value = str(save_target)
                 with patch("gamesave_vcs.backup.shutil.copytree") as mock_copytree:
                     with patch("gamesave_vcs.backup.shutil.rmtree") as mock_rmtree:
-                        result = restore_save(str(backup_dir))
+                        # Patches for tempfile/os in dir case restore (uses mkstemp? No , but replace/unlink for atomic; MagicMock Path causes FS fail on os.replace)
+                        # Note: dir case uses os.replace(tmp_save, save_path)
+                        with patch("gamesave_vcs.backup.tempfile.mkstemp") as mock_mk:
+                            # not hit in dir but safe
+                            mock_mk.return_value = (3, "/tmp/tmp")
+                            with patch("gamesave_vcs.backup.os.close"):
+                                with patch("gamesave_vcs.backup.os.replace"):
+                                    with patch("gamesave_vcs.backup.os.unlink"):
+                                        result = restore_save(str(backup_dir))
         assert result is True
         mock_copytree.assert_called()
         mock_rmtree.assert_called()
@@ -165,6 +185,7 @@ def test_restore_save_latest_and_no_backups(capsys):
     captured = capsys.readouterr()
     assert "No backups found" in captured.out
     # Now with backup: force full-copy for copy2 branch in auto-restore dispatch
+    # Added FS mocks (tempfile/os) for file case in latest restore (Path mock causes mkstemp dir=parent fail)
     with patch("gamesave_vcs.backup.list_saves") as mock_list:
         mock_latest = MagicMock()
         mock_list.return_value = [(datetime.now(), mock_latest, "game")]
@@ -175,7 +196,14 @@ def test_restore_save_latest_and_no_backups(capsys):
                 with patch("gamesave_vcs.backup.get_game_path") as mock_get:
                     mock_get.return_value = "/tmp/save.dat"
                     with patch("gamesave_vcs.backup.shutil.copy2") as mock_copy:
-                        result = restore_save(None)  # auto latest
+                        with patch(
+                            "gamesave_vcs.backup.tempfile.mkstemp"
+                        ) as mock_mkstemp:
+                            mock_mkstemp.return_value = (3, "/tmp/tmp_save")
+                            with patch("gamesave_vcs.backup.os.close"):
+                                with patch("gamesave_vcs.backup.os.replace"):
+                                    with patch("gamesave_vcs.backup.os.unlink"):
+                                        result = restore_save(None)  # auto latest
     assert result is True
     mock_copy.assert_called()
 
@@ -352,18 +380,20 @@ def test_git_strategy_list_saves(mock_bdir, mock_repo_cls):
 def test_git_strategy_restore(mock_get, mock_copy, mock_reset):
     """Test git restore with Dulwich: reset hard , then copy from content_path."""
     # Arrange: mock Dulwich , Path , get
+    # Added backend patch to force GitStrategy (else detect falls to FullCopy on no .git , hitting tempfile mkstemp on mock Path -> FS error)
     mock_get.return_value = "/tmp/save.dat"
-    with patch("gamesave_vcs.backup.Path") as mock_p:
-        # Mocks for Path calls (repo , save , content via / )
-        mock_repo = MagicMock()
-        mock_repo.name = "test"
-        mock_content = MagicMock()
-        mock_content.exists.return_value = True
-        mock_content.is_dir.return_value = False
-        mock_repo.__truediv__.return_value = mock_content
-        mock_p.side_effect = [mock_repo, mock_content] * 10
-        # Act: repo@commit spec
-        result = restore_save("/tmp/backups/test@abc123")
+    with patch("gamesave_vcs.backup.get_game_backend", return_value="git"):
+        with patch("gamesave_vcs.backup.Path") as mock_p:
+            # Mocks for Path calls (repo , save , content via / )
+            mock_repo = MagicMock()
+            mock_repo.name = "test"
+            mock_content = MagicMock()
+            mock_content.exists.return_value = True
+            mock_content.is_dir.return_value = False
+            mock_repo.__truediv__.return_value = mock_content
+            mock_p.side_effect = [mock_repo, mock_content] * 10
+            # Act: repo@commit spec
+            result = restore_save("/tmp/backups/test@abc123")
     # Assert: hit restore code , Dulwich reset
     assert isinstance(result, bool)
     # Mock assert removed (Path / variability in test; reset called in real/integration , cov hit)
@@ -433,8 +463,8 @@ def test_git_restore_dir_case(mock_copytree, mock_reset):
                 result = restore_save("/tmp/repo@hash")
     assert isinstance(result, bool)
     # Assert removed (dir branch hit in integration/git_journey ; cov goal via other)
-    # Avoid mock raise variability
-    mock_reset.assert_called() or True
+    # Avoid mock raise variability; assert called for test
+    mock_reset.assert_called()  # type: ignore[reportUnusedExpression]
 
 
 def test_git_restore_copy_error():

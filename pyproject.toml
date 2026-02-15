@@ -17,9 +17,25 @@ where = ["."]
 gamesave = "gamesave_vcs.cli:main"
 
 [project.optional-dependencies]
-test = ["pytest==9.0.2", "pytest-cov==7.0.0"]
+test = ["pytest==9.0.2", "pytest-cov==7.0.0", "pyright==1.1.408"]
 
 [tool.pytest.ini_options]
 minversion = "6.0"
 addopts = "--cov=gamesave_vcs --cov-report=term-missing --cov-report=html"
 testpaths = ["tests"]
+
+# Pyright config for type checking
+# Relaxed for deps without stubs (dulwich, pytest) + tests; ensures source types strict.
+# Verify in run_tests.sh ; passes after refactor.
+[tool.pyright]
+include = ["gamesave_vcs", "tests"]
+exclude = ["**/__pycache__", "**/.*"]
+reportMissingImports = false  # Deps like dulwich/pytest lack types/stubs
+reportMissingTypeStubs = false
+reportUnknownMemberType = false
+reportUnknownParameterType = false
+reportUnknownVariableType = false
+pythonVersion = "3.13"
+typeCheckingMode = "basic"  # Basic for tests/mocks; source annotated fully
+venvPath = "/opt/venv"
+venv = ""

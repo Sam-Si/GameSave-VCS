@@ -1,15 +1,18 @@
 import hashlib
-import shutil
 import os
+import shutil
 import tempfile
-from pathlib import Path
-from datetime import datetime
 from abc import ABC, abstractmethod
+from datetime import datetime
 # Dulwich for pure-Python Git (no host binary/subprocess dep)
 import dulwich.porcelain as porcelain
 from dulwich.repo import Repo
+from pathlib import Path
+from typing import List, Optional, Union
 # Import from config for strategy dispatch and backend
+# ensure_dirs for robustness (esp unit tests that patch get_* bypassing load_config)
 from .config import (
+    ensure_dirs,
     get_backups_dir,
     get_game_path,
     get_game_backend,
@@ -17,12 +20,15 @@ from .config import (
     load_config,
 )
 
-def get_save_hash(save_path):
+def get_save_hash(save_path: Union[str, Path]) -> str:
+    """Compute SHA256 hash of file or recursive dir contents (sorted for determinism).
+    Used by watcher for change detection.
+    """
     save_path = Path(save_path)
     hasher = hashlib.sha256()
     if save_path.is_file():
-        with open(save_path, 'rb') as f:
-            for chunk in iter(lambda: f.read(4096), b''):
+        with open(save_path, "rb") as f:
+            for chunk in iter(lambda: f.read(4096), b""):
                 hasher.update(chunk)
     elif save_path.is_dir():
         for root, dirs, files in os.walk(save_path, followlinks=False):
@@ -30,8 +36,8 @@ def get_save_hash(save_path):
                 fpath = Path(root) / name
                 rel = fpath.relative_to(save_path)
                 hasher.update(str(rel).encode())
-                with open(fpath, 'rb') as f:
-                    for chunk in iter(lambda: f.read(4096), b''):
+                with open(fpath, "rb") as f:
+                    for chunk in iter(lambda: f.read(4096), b""):
                         hasher.update(chunk)
     return hasher.hexdigest()
 
@@ -44,26 +50,25 @@ class BackupStrategy(ABC):
     """
 
     @abstractmethod
-    def backup_save(self, game_name: str):
+    def backup_save(self, game_name: str) -> Optional[Path]:
         """Backup the game's save. Returns backup location (Path) or None.
         Called by watcher/CLI on change.
         """
-        pass
 
     @abstractmethod
-    def list_saves(self, game_name: str = None) -> list:
+    def list_saves(
+        self, game_name: Optional[str] = None
+    ) -> List[tuple[datetime, Union[Path, str], str]]:
         """List saves/backups. Returns list of (datetime, spec, game_name).
         spec: Path for full-copy, 'repo@commit' str for git.
         Supports game=None for aggregate.
         """
-        pass
 
     @abstractmethod
-    def restore_save(self, backup_spec) -> bool:
+    def restore_save(self, backup_spec: Union[str, Path]) -> bool:
         """Restore from backup_spec.
         Parses spec to apply strategy-specific restore.
         """
-        pass
 
 
 class FullCopyStrategy(BackupStrategy):
@@ -72,7 +77,7 @@ class FullCopyStrategy(BackupStrategy):
     but fulfills "won't deny them" old style.
     """
 
-    def backup_save(self, game_name):
+    def backup_save(self, game_name: str) -> Optional[Path]:
         """Atomic backup for full copy: copy to temp , os.replace for all-or-nothing (POSIX atomic rename)."""
         save_path = get_game_path(game_name)
         if not save_path or not Path(save_path).exists():
@@ -80,13 +85,15 @@ class FullCopyStrategy(BackupStrategy):
             return None
         save_path = Path(save_path)
         backup_dir = get_backups_dir() / game_name
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        # Ensure per-game backup dir (robust for unit tests without prior add_game; GitStrategy already does via _ensure_repo)
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         backup_name = f"{timestamp}_{save_path.name}"
         backup_path = backup_dir / backup_name
         # Atomic: use temp to avoid partial state on crash/interrupt
         if save_path.is_file():
             # For file: NamedTemporaryFile + replace
-            fd, tmp_path = tempfile.mkstemp(dir=backup_dir, prefix='.tmp_')
+            fd, tmp_path = tempfile.mkstemp(dir=backup_dir, prefix=".tmp_")
             os.close(fd)
             shutil.copy2(save_path, tmp_path)
             if backup_path.exists():
@@ -94,7 +101,9 @@ class FullCopyStrategy(BackupStrategy):
             os.replace(tmp_path, backup_path)  # atomic
         elif save_path.is_dir():
             # For dir: temp dir , copytree , replace (rm old)
-            tmp_path = backup_path.with_suffix(backup_path.suffix + '.tmp' + str(os.getpid()))
+            tmp_path = backup_path.with_suffix(
+                backup_path.suffix + ".tmp" + str(os.getpid())
+            )
             shutil.copytree(save_path, tmp_path)
             if backup_path.exists():
                 shutil.rmtree(backup_path)
@@ -102,30 +111,34 @@ class FullCopyStrategy(BackupStrategy):
         print(f"Backed up {game_name} save to {backup_path} (full-copy, atomic)")
         return backup_path
 
-    def _list_saves_for_game(self, game_dir: Path, game_name: str) -> list:
+    def _list_saves_for_game(
+        self, game_dir: Path, game_name: str
+    ) -> List[tuple[datetime, Path, str]]:
         """Helper: parse timestamped files/dirs for full-copy (legacy)."""
-        saves = []
+        saves: List[tuple[datetime, Path, str]] = []
         if not game_dir.exists():
             return saves
         for f in game_dir.iterdir():
             # Skip git internals like .git to prevent parse errors
-            if f.name.startswith('.'):
+            if f.name.startswith("."):
                 continue
             if f.is_file() or f.is_dir():
                 try:
-                    parts = f.name.split('_')
-                    ts_str = '_'.join(parts[:2])
-                    ts = datetime.strptime(ts_str, '%Y%m%d_%H%M%S')
+                    parts = f.name.split("_")
+                    ts_str = "_".join(parts[:2])
+                    ts = datetime.strptime(ts_str, "%Y%m%d_%H%M%S")
                     saves.append((ts, f, game_name))
                 except ValueError:
                     pass
         return saves
 
-    def list_saves(self, game_name=None):
+    def list_saves(
+        self, game_name: Optional[str] = None
+    ) -> List[tuple[datetime, Union[Path, str], str]]:
         """Original list_saves logic, adapted to skip git dirs/files for clean legacy support.
         Handles mixed repos in aggregate.
         """
-        saves = []
+        saves: List[tuple[datetime, Union[Path, str], str]] = []
         backups_dir = get_backups_dir()
         if not backups_dir.exists():
             return saves
@@ -136,12 +149,12 @@ class FullCopyStrategy(BackupStrategy):
             for game_dir in backups_dir.iterdir():
                 if game_dir.is_dir():
                     # Full-copy only: .git presence handled in top-level dispatch
-                    if not (game_dir / '.git').exists():
+                    if not (game_dir / ".git").exists():
                         saves.extend(self._list_saves_for_game(game_dir, game_dir.name))
         saves.sort(key=lambda x: x[0], reverse=True)
         return saves
 
-    def restore_save(self, backup_spec) -> bool:
+    def restore_save(self, backup_spec: Union[str, Path]) -> bool:
         """Atomic restore for full-copy: copy to temp target , os.replace for all-or-nothing.
         Prevents partial overwrite of live save on failure/crash.
         """
@@ -158,7 +171,9 @@ class FullCopyStrategy(BackupStrategy):
         # Atomic: temp for target save , replace (safe for file/dir)
         if backup_path.is_dir():
             # Dir case
-            tmp_save = save_path.with_suffix(save_path.suffix + '.tmp' + str(os.getpid()))
+            tmp_save = save_path.with_suffix(
+                save_path.suffix + ".tmp" + str(os.getpid())
+            )
             if save_path.exists():
                 if save_path.is_dir():
                     shutil.rmtree(save_path)
@@ -169,7 +184,9 @@ class FullCopyStrategy(BackupStrategy):
             os.replace(tmp_save, save_path)  # atomic swap
         else:
             # File case
-            fd, tmp_save = tempfile.mkstemp(dir=save_path.parent, prefix='.tmp_')
+            fd, tmp_save = tempfile.mkstemp(
+                dir=save_path.parent, prefix=".tmp_"
+            )
             os.close(fd)
             shutil.copy2(backup_path, tmp_save)
             if save_path.exists():
@@ -206,7 +223,7 @@ class GitStrategy(BackupStrategy):
         """Save content stored under repo/<original_save_basename> to mirror structure."""
         return repo_dir / save_path.name
 
-    def backup_save(self, game_name):
+    def backup_save(self, game_name: str) -> Optional[Path]:
         """Backup via Dulwich: sync save to repo working tree, commit delta.
         Pure-Python: no subprocess; Dulwich porcelain handles add/commit.
         Delta efficiency: stores only changes vs previous.
@@ -232,7 +249,7 @@ class GitStrategy(BackupStrategy):
             porcelain.add(str(repo_dir))
         except Exception:
             pass  # no-op if no changes
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         commit_msg = f"Backup {timestamp} for {game_name}"
         # Commit with explicit author (Dulwich requires to avoid defaults/errors)
         try:
@@ -250,11 +267,13 @@ class GitStrategy(BackupStrategy):
         # Get current commit hash (via Repo)
         r = Repo(str(repo_dir))
         commit_hash = r.head().decode()
-        backup_spec = f"{repo_dir}@{commit_hash}"
+        # backup_spec = f"{repo_dir}@{commit_hash}"  # for doc
         print(f"Backed up {game_name} save to git repo {repo_dir} at commit {commit_hash} (git strategy)")
         return repo_dir  # API compat (repo Path)
 
-    def list_saves(self, game_name: str = None) -> list:
+    def list_saves(
+        self, game_name: Optional[str] = None
+    ) -> List[tuple[datetime, Union[Path, str], str]]:
         """List git commits as "saves": use Dulwich log walker for ts/hash.
         backup_spec='repo@commit' encodes for restore dispatch.
         Pure-Python replacement for git log.
@@ -262,9 +281,9 @@ class GitStrategy(BackupStrategy):
         if game_name is None:
             # Per-game only; aggregate in top-level
             return []
-        saves = []
+        saves: List[tuple[datetime, Union[Path, str], str]] = []
         repo_dir = get_backups_dir() / game_name
-        if not (repo_dir / '.git').exists():
+        if not (repo_dir / ".git").exists():
             return saves
         try:
             # Dulwich: use Repo.get_walker() for commits (porcelain.log walker sometimes empty post-consume; low-level reliable)
@@ -283,19 +302,19 @@ class GitStrategy(BackupStrategy):
             pass
         return saves
 
-    def restore_save(self, backup_spec) -> bool:
+    def restore_save(self, backup_spec: Union[str, Path]) -> bool:
         """Restore: parse repo@commit , Dulwich reset --hard to snapshot , then copy to save_path.
         Pure-Python: no subprocess; Dulwich reconstructs state from history.
         """
         # Expect str 'repo@commit' from list/git backup
         spec_str = str(backup_spec)
-        if '@' not in spec_str:
+        if "@" not in spec_str:
             print("Invalid git backup spec (expected repo@commit)")
             return False
-        repo_str, commit_hash = spec_str.split('@', 1)
+        repo_str, commit_hash = spec_str.split("@", 1)
         repo_dir = Path(repo_str)
         game_name = repo_dir.name
-        if not (repo_dir / '.git').exists():
+        if not (repo_dir / ".git").exists():
             print("Git repo not found")
             return False
         save_path_str = get_game_path(game_name)
@@ -305,7 +324,7 @@ class GitStrategy(BackupStrategy):
         save_path = Path(save_path_str)
         try:
             # Dulwich porcelain.reset hard: applies historical delta state to working tree
-            porcelain.reset(str(repo_dir), treeish=commit_hash.encode(), mode=b'hard')
+            porcelain.reset(str(repo_dir), treeish=commit_hash.encode(), mode="hard")
             # Content now at content_path in repo
             content_path = self._get_content_path(repo_dir, save_path)
             if not content_path.exists():
@@ -358,20 +377,26 @@ def get_strategy(game_name: str) -> BackupStrategy:
 
 # Top-level public API - unchanged for CLI/watcher/tests compat
 # Dispatches to strategy based on per-game config or detect
-def backup_save(game_name):
+def backup_save(game_name: str) -> Optional[Path]:
     """Dispatch to game's backend strategy for backup.
     Default: git for delta efficiency; configurable to full-copy.
+    Calls ensure_dirs for robustness (tests patching config funcs).
     """
+    ensure_dirs()
     strategy = get_strategy(game_name)
     return strategy.backup_save(game_name)
 
 
-def list_saves(game_name=None):
+def list_saves(
+    game_name: Optional[str] = None,
+) -> List[tuple[datetime, Union[Path, str], str]]:
     """Aggregate list supporting mixed strategies (git/full-copy) + legacy backups.
     game=None: scan all; else dispatch to strategy.
     Ensures old full-copy backups still listable if present.
+    Calls ensure_dirs for robustness.
     """
-    saves = []
+    ensure_dirs()
+    saves: List[tuple[datetime, Union[Path, str], str]] = []
     backups_dir = get_backups_dir()
     if not backups_dir.exists():
         return saves
@@ -399,11 +424,13 @@ def list_saves(game_name=None):
     return saves
 
 
-def restore_save(backup_spec=None):
+def restore_save(backup_spec: Optional[Union[str, Path]] = None) -> bool:
     """Dispatch restore to appropriate strategy based on spec/game.
     Auto-latest works across backends; parses spec (Path vs repo@commit).
     Backward compat for old backup paths.
+    Calls ensure_dirs for robustness (tests patching get_*).
     """
+    ensure_dirs()
     if not backup_spec:
         saves = list_saves()
         if not saves:
@@ -414,9 +441,9 @@ def restore_save(backup_spec=None):
         print(f"Auto-restoring latest: {backup_spec}")
     # Infer game_name from spec for dispatch
     spec_str = str(backup_spec)
-    if '@' in spec_str:
+    if "@" in spec_str:
         # git style
-        repo_str, _ = spec_str.split('@', 1)
+        repo_str, _ = spec_str.split("@", 1)
         game_name = Path(repo_str).name
     else:
         # full-copy: backup item path

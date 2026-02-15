@@ -1,19 +1,27 @@
-import time
 import threading
+import time
 from pathlib import Path
+from typing import Optional
+
+# Local
+from .backup import backup_save, get_save_hash
 from .config import get_game_path
-from .backup import get_save_hash, backup_save
+
 
 class GameWatcher:
-    def __init__(self, game_name, interval=5):
-        self.game_name = game_name
-        self.interval = interval
-        self.running = False
-        self.thread = None
-        self.last_hash = None
-        self.save_path = get_game_path(game_name)
+    """Watcher for game save changes using polling + hash diff; triggers backup."""
 
-    def start(self):
+    def __init__(self, game_name: str, interval: float | int = 5) -> None:
+        """Init watcher; save_path from config (may be None if game unknown)."""
+        self.game_name: str = game_name
+        self.interval: float | int = interval
+        self.running: bool = False
+        self.thread: Optional[threading.Thread] = None
+        self.last_hash: Optional[str] = None
+        self.save_path: Optional[str] = get_game_path(game_name)
+
+    def start(self) -> None:
+        """Start watcher thread if save_path valid."""
         if self.save_path is None:
             print("Game not found")
             return
@@ -22,13 +30,17 @@ class GameWatcher:
         self.thread.start()
         print(f"Started watcher for {self.game_name}")
 
-    def stop(self):
+    def stop(self) -> None:
+        """Stop watcher and join thread."""
         self.running = False
         if self.thread:
             self.thread.join()
         print(f"Stopped watcher for {self.game_name}")
 
-    def _watch_loop(self):
+    def _watch_loop(self) -> None:
+        """Internal loop: poll, hash compare (using get_save_hash), backup on change.
+        Daemon, runs until stop().
+        """
         if self.save_path is None:
             return
         save_path = Path(self.save_path)
@@ -39,7 +51,7 @@ class GameWatcher:
         while self.running:
             time.sleep(self.interval)
             if save_path.exists():
-                current_hash = get_save_hash(save_path)
+                current_hash: str = get_save_hash(save_path)
                 if current_hash != self.last_hash:
                     print(f"Change detected in {self.game_name} save")
                     backup_save(self.game_name)

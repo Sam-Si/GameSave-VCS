@@ -1,13 +1,15 @@
-import pytest
+import shutil
 import subprocess
 import time
-import shutil
 from pathlib import Path
-import os
-import tempfile
+
+import pytest
+
+# os, tempfile unused (PEP 8 clean; integration relies on subprocess/FS helpers)
 from gamesave_vcs.config import get_base_dir
 
 GAMESAVE_BIN = shutil.which("gamesave") or "/opt/venv/bin/gamesave"
+
 
 @pytest.fixture
 def temp_setup():
@@ -30,10 +32,17 @@ def temp_setup():
     if config_dir.exists():
         shutil.rmtree(config_dir, ignore_errors=True)
 
+
 def run_cli(args, cwd=None):
     # Helper: use full bin path
-    result = subprocess.run([GAMESAVE_BIN] + args, capture_output=True, text=True, cwd=cwd or Path.cwd())
+    result = subprocess.run(
+        [GAMESAVE_BIN] + args,
+        capture_output=True,
+        text=True,
+        cwd=cwd or Path.cwd(),
+    )
     return result
+
 
 def test_integration_add_and_list(temp_setup):
     # Arrange
@@ -42,12 +51,16 @@ def test_integration_add_and_list(temp_setup):
     # Act: add
     result = run_cli(["add", game_name, str(save_file)])
     assert result.returncode == 0, f"Add failed: {result.stderr}"
-    assert "Added/updated game" in result.stdout or "Added/updated game" in result.stderr
+    assert (
+        "Added/updated game" in result.stdout
+        or "Added/updated game" in result.stderr
+    )
     # Act: list
     result = run_cli(["list", "--game", game_name])
     assert result.returncode == 0
     # String check optional (empty if no backups)
     # assert "testgame" in result.stdout or "testgame" in result.stderr
+
 
 def test_integration_manual_backup_and_restore(temp_setup):
     # Arrange
@@ -67,6 +80,7 @@ def test_integration_manual_backup_and_restore(temp_setup):
     # Assert
     assert save_file.read_text() == "initial data"
 
+
 def test_integration_watch_change_detection(temp_setup):
     # Arrange
     tmp, save_file = temp_setup
@@ -75,7 +89,12 @@ def test_integration_watch_change_detection(temp_setup):
     run_cli(["add", game_name, str(save_file)])
     # Act: watch bg
     watch_cmd = [GAMESAVE_BIN, "watch", game_name, "--interval", "1"]
-    watch_proc = subprocess.Popen(watch_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=Path.cwd())
+    watch_proc = subprocess.Popen(
+        watch_cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        cwd=Path.cwd(),
+    )
     time.sleep(2)
     save_file.write_text("changed data")
     time.sleep(3)
@@ -86,6 +105,7 @@ def test_integration_watch_change_detection(temp_setup):
     assert "changed data" in save_file.read_text()
     assert len(result.stdout.strip().split("\n")) >= 1
 
+
 def test_integration_edge_cases(temp_setup):
     # Arrange
     tmp, save_file = temp_setup
@@ -93,10 +113,18 @@ def test_integration_edge_cases(temp_setup):
     run_cli(["add", game_name, str(save_file)])
     # Act + Assert: duplicate
     result = run_cli(["add", game_name, "/other"])
-    assert result.returncode != 0 or "already exists" in result.stderr.lower() or result.stdout
+    assert (
+        result.returncode != 0
+        or "already exists" in result.stderr.lower()
+        or result.stdout
+    )
     # Act + Assert: invalid restore
     result = run_cli(["restore", "/invalid"])
-    assert "Backup not found" in result.stdout or "Backup not found" in result.stderr
+    assert (
+        "Backup not found" in result.stdout
+        or "Backup not found" in result.stderr
+    )
+
 
 def test_integration_supported_games(temp_setup):
     # Arrange (test supported games cmds; fixture cleans config)
@@ -111,8 +139,10 @@ def test_integration_supported_games(temp_setup):
     result = run_cli(["list"])  # general list ok
     assert result.returncode == 0
 
+
 # Robust integration tests for all user journeys (full from-scratch flows, AAA, real CLI/FS asserts)
 # Covers manual, watcher, supported auto, missing-path edge + end-to-end restore/backup skip
+
 
 def test_integration_full_manual_journey(temp_setup):
     # Arrange: fresh save + unique game , use full-copy for legacy parse/backup_path
@@ -129,13 +159,16 @@ def test_integration_full_manual_journey(temp_setup):
     # Act: list + restore
     result = run_cli(["list", "--game", game_name])
     assert result.returncode == 0
-    backup_line = [line for line in result.stdout.strip().split("\n") if game_name in line][0]
+    backup_line = [
+        line for line in result.stdout.strip().split("\n") if game_name in line
+    ][0]
     backup_path = backup_line.split(" | ")[-1].strip()
     result = run_cli(["restore", backup_path])
     assert result.returncode == 0
     # Assert: restored content + FS
     assert save_file.read_text() == "initial progress"
     assert Path(backup_path).exists()
+
 
 def test_integration_watcher_journey(temp_setup):
     # Arrange: save + add
@@ -145,7 +178,9 @@ def test_integration_watcher_journey(temp_setup):
     run_cli(["add", game_name, str(save_file)])
     # Act: start watcher bg + change
     watch_cmd = [GAMESAVE_BIN, "watch", game_name, "--interval", "1"]
-    watch_proc = subprocess.Popen(watch_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    watch_proc = subprocess.Popen(
+        watch_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+    )
     time.sleep(2)
     save_file.write_text("level 15")  # Trigger
     time.sleep(4)  # Allow detect/backup
@@ -155,23 +190,34 @@ def test_integration_watcher_journey(temp_setup):
     assert result.returncode == 0
     # Assert: auto-backup created + content
     assert len(result.stdout.strip().split("\n")) >= 1
-    assert "level 15" in save_file.read_text()  # Original updated, but backup exists
+    assert (
+        "level 15" in save_file.read_text()
+    )  # Original updated, but backup exists
+
 
 def test_integration_supported_auto_journey(temp_setup):
     # Arrange: supported save (use unique name to avoid cross-test dupe; full-copy for stability)
     tmp, save_file = temp_setup
-    game_name = f"mc_test_{int(time.time())}"  # Not real Minecraft to avoid any
+    game_name = (
+        f"mc_test_{int(time.time())}"  # Not real Minecraft to avoid any
+    )
     save_file.write_text("world data")
     # Act: search + add (demo supported) + backup full-copy + list
     result = run_cli(["games", "--search", "mine"])
     assert "Minecraft" in result.stdout or "Minecraft" in result.stderr
-    run_cli(["add", game_name, str(save_file), "--backend", "full-copy"])  # Explicit for test stability
+    run_cli(
+        ["add", game_name, str(save_file), "--backend", "full-copy"]
+    )  # Explicit for test stability
     result = run_cli(["backup", game_name])
-    assert result.returncode == 0 or "skipped" in (result.stdout + result.stderr).lower()
+    assert (
+        result.returncode == 0
+        or "skipped" in (result.stdout + result.stderr).lower()
+    )
     result = run_cli(["list", "--game", game_name])
     assert result.returncode == 0
     # Assert: supported flow + outputs
     assert game_name in result.stdout or game_name in result.stderr or True
+
 
 def test_integration_missing_path_journey(temp_setup):
     # Arrange: missing path case + valid override
@@ -182,17 +228,29 @@ def test_integration_missing_path_journey(temp_setup):
     run_cli(["add", game_name, missing_path])
     result = run_cli(["backup", game_name])
     assert result.returncode == 0
-    assert "Backup skipped" in result.stdout or "Backup skipped" in result.stderr
+    assert (
+        "Backup skipped" in result.stdout or "Backup skipped" in result.stderr
+    )
     # Act: create valid save + add/backup success + restore
     # Use full-copy to keep simple timestamped backup_path parse
     Path("/tmp/missing_test").mkdir(parents=True, exist_ok=True)
     real_file = Path("/tmp/missing_test/save.dat")
     real_file.write_text("real data")
-    run_cli(["add", f"{game_name}_valid", str(real_file), "--backend", "full-copy"])  # Unique name
+    run_cli(
+        ["add", f"{game_name}_valid", str(real_file), "--backend", "full-copy"]
+    )  # Unique name
     result = run_cli(["backup", f"{game_name}_valid"])
     assert "Backed up" in result.stdout
     result = run_cli(["list", "--game", f"{game_name}_valid"])
-    backup_path = [line for line in result.stdout.split("\n") if f"{game_name}_valid" in line][0].split(" | ")[-1].strip()
+    backup_path = (
+        [
+            line
+            for line in result.stdout.split("\n")
+            if f"{game_name}_valid" in line
+        ][0]
+        .split(" | ")[-1]
+        .strip()
+    )
     # Act: restore + assert
     run_cli(["restore", backup_path])
     assert real_file.read_text() == "real data"
@@ -211,7 +269,10 @@ def test_integration_git_journey(temp_setup):
     result = run_cli(["add", game_name, str(save_file), "--backend", "git"])
     assert result.returncode == 0
     # Print may in stdout/stderr
-    assert "Added/updated game" in result.stdout or "Added/updated game" in result.stderr
+    assert (
+        "Added/updated game" in result.stdout
+        or "Added/updated game" in result.stderr
+    )
     assert "git" in (result.stdout + result.stderr).lower()
     # Act: manual backup (creates git commit/delta)
     result = run_cli(["backup", game_name])
@@ -224,7 +285,7 @@ def test_integration_git_journey(temp_setup):
     # Act: list + restore latest (auto; avoids parse , supports Dulwich repo@commit)
     result = run_cli(["list", "--game", game_name])
     assert result.returncode == 0
-    # Auto restore latest (Dulwich) 
+    # Auto restore latest (Dulwich)
     result = run_cli(["restore"])
     assert result.returncode == 0
     # Assert: restored latest , proves Dulwich restore/copy from content_path (after reset)

@@ -1,7 +1,10 @@
-import pytest
-from unittest.mock import patch, MagicMock
 from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pytest
+
 from gamesave_vcs.cli import main
+
 
 def test_cli_help():
     # Arrange
@@ -13,6 +16,7 @@ def test_cli_help():
     # Assert
     # Help shown via argparse
 
+
 def test_cli_add():
     # Arrange
     with patch("gamesave_vcs.cli.add_game") as mock_add:
@@ -20,7 +24,10 @@ def test_cli_add():
         with patch("sys.argv", ["cli", "add", "testgame", "/tmp/save.dat"]):
             main()
     # Assert
-    mock_add.assert_called_with("testgame", "/tmp/save.dat", force=False, backend="git")
+    mock_add.assert_called_with(
+        "testgame", "/tmp/save.dat", force=False, backend="git"
+    )
+
 
 def test_cli_watch():
     # Arrange (pure mocks, no thread/infinite loop)
@@ -28,12 +35,15 @@ def test_cli_watch():
         mock_watcher = MagicMock()
         mock_watcher_cls.return_value = mock_watcher
         with patch("threading.Thread"):
-            with patch("gamesave_vcs.cli.time.sleep", side_effect=KeyboardInterrupt):  # break infinite while in main
+            with patch(
+                "gamesave_vcs.cli.time.sleep", side_effect=KeyboardInterrupt
+            ):  # break infinite while in main
                 # Act
                 with patch("sys.argv", ["cli", "watch", "testgame"]):
                     main()
     # Assert
     mock_watcher_cls.assert_called()
+
 
 def test_cli_list():
     # Arrange: non-empty to hit print line
@@ -47,6 +57,7 @@ def test_cli_list():
     mock_list.assert_called()
     mock_print.assert_called()
 
+
 def test_cli_restore():
     # Arrange
     with patch("gamesave_vcs.cli.restore_save") as mock_restore:
@@ -55,6 +66,7 @@ def test_cli_restore():
             main()
     # Assert
     mock_restore.assert_called_with("/fake/backup")
+
 
 def test_cli_restore_branch():
     # Arrange (hit lines 40,45 in restore if)
@@ -66,6 +78,7 @@ def test_cli_restore_branch():
     # Assert
     mock_restore.assert_called()
 
+
 def test_cli_restore_no_game():
     # Arrange (hit lines 40,45: game not found print in restore)
     with patch("gamesave_vcs.cli.restore_save") as mock_restore:
@@ -76,6 +89,7 @@ def test_cli_restore_no_game():
     # Assert
     mock_restore.assert_called()
 
+
 def test_cli_games_list():
     with patch("gamesave_vcs.cli.list_supported_games") as mock_list:
         mock_list.return_value = ["Minecraft"]
@@ -83,6 +97,7 @@ def test_cli_games_list():
             mock_path.return_value = "~/.minecraft"
             with patch("sys.argv", ["cli", "games", "--list"]):
                 main()
+
 
 def test_cli_games_search():
     with patch("gamesave_vcs.cli.search_games") as mock_search:
@@ -92,6 +107,7 @@ def test_cli_games_search():
             with patch("sys.argv", ["cli", "games", "--search", "mine"]):
                 main()
 
+
 def test_cli_games_no_args(capsys):
     # Test missed branch: games no --list/--search , hits print "Use --list or --search"
     with patch("sys.argv", ["cli", "games"]):
@@ -99,25 +115,35 @@ def test_cli_games_no_args(capsys):
     captured = capsys.readouterr()
     assert "Use --list or --search" in captured.out
 
+
 def test_cli_add_supported(capsys):
     with patch("gamesave_vcs.cli.get_supported_game_path") as mock_get:
         mock_get.return_value = "~/.minecraft/saves/"
         with patch("gamesave_vcs.config.Path") as mock_path:
             mock_path.return_value.exists.return_value = True
-            with patch("gamesave_vcs.cli.add_game") as mock_add:  # still mock to avoid real FS/config
+            with patch(
+                "gamesave_vcs.cli.add_game"
+            ) as mock_add:  # still mock to avoid real FS/config
                 with patch("sys.argv", ["cli", "add", "Minecraft"]):
                     main()
     # Default backend=git
-    mock_add.assert_called_with("Minecraft", "~/.minecraft/saves/", force=False, backend="git")
+    mock_add.assert_called_with(
+        "Minecraft", "~/.minecraft/saves/", force=False, backend="git"
+    )
     captured = capsys.readouterr()
     assert "Using suggested path for Minecraft" in captured.out
+
 
 def test_cli_add_force(capsys):
     # Test --force + default backend
     with patch("gamesave_vcs.cli.add_game") as mock_add:
-        with patch("sys.argv", ["cli", "add", "mygame", "/new/path", "--force"]):
+        with patch(
+            "sys.argv", ["cli", "add", "mygame", "/new/path", "--force"]
+        ):
             main()
-    mock_add.assert_called_with("mygame", "/new/path", force=True, backend="git")
+    mock_add.assert_called_with(
+        "mygame", "/new/path", force=True, backend="git"
+    )
     captured = capsys.readouterr()
     # Force handled in add_game
 
@@ -125,10 +151,16 @@ def test_cli_add_force(capsys):
 def test_cli_add_backend(capsys):
     # Test --backend option
     with patch("gamesave_vcs.cli.add_game") as mock_add:
-        with patch("sys.argv", ["cli", "add", "mygame", "/path", "--backend", "full-copy"]):
+        with patch(
+            "sys.argv",
+            ["cli", "add", "mygame", "/path", "--backend", "full-copy"],
+        ):
             main()
-    mock_add.assert_called_with("mygame", "/path", force=False, backend="full-copy")
+    mock_add.assert_called_with(
+        "mygame", "/path", force=False, backend="full-copy"
+    )
     # No capsys needed , call verified
+
 
 def test_cli_add_unsupported_no_path(capsys):
     with patch("gamesave_vcs.cli.get_supported_game_path") as mock_get:
@@ -138,6 +170,7 @@ def test_cli_add_unsupported_no_path(capsys):
     captured = capsys.readouterr()
     assert "Path required for unsupported games" in captured.out
 
+
 def test_cli_games_no_match(capsys):
     with patch("gamesave_vcs.cli.search_games") as mock_search:
         mock_search.return_value = []
@@ -145,6 +178,7 @@ def test_cli_games_no_match(capsys):
             main()
     captured = capsys.readouterr()
     assert "No matching games found" in captured.out
+
 
 def test_cli_games_list_full(capsys):
     with patch("gamesave_vcs.cli.list_supported_games") as mock_list:

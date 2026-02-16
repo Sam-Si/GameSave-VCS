@@ -9,8 +9,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Union
 
-# Internal import for config/dispatch (minimal for PEP 8; unused removed)
-from ..config import get_backups_dir, get_game_backend
+# Internal import refactored to absolute (gamesave_vcs.*) for Bazel compatibility.
+# Relative (..) updated to absolute; enables dispatch in subpackage under Bazel runfiles/PYTHONPATH.
+# See root files for full details. Preserves strategy pattern/extensibility.
+from gamesave_vcs.config import get_backups_dir, get_game_backend
 
 
 class BackupStrategy(ABC):
@@ -49,11 +51,14 @@ def detect_strategy(game_name: str) -> "BackupStrategy":
     backups_dir = get_backups_dir()
     game_dir = backups_dir / game_name
     # Lazy import to avoid circular (full impl in own files)
+    # Refactored to absolute for Bazel (relative . would fail in subpkg context).
+    # Dynamic dispatch for detect_strategy/get_strategy still works (git/full-copy choice).
+    # Maintains extensibility (add strategy/*.py + register here) without circulars.
     if (game_dir / ".git").exists():
-        from .git import GitStrategy
+        from gamesave_vcs.strategies.git import GitStrategy
 
         return GitStrategy()
-    from .full_copy import FullCopyStrategy
+    from gamesave_vcs.strategies.full_copy import FullCopyStrategy
 
     return FullCopyStrategy()
 
@@ -63,12 +68,14 @@ def get_strategy(game_name: str) -> "BackupStrategy":
     Makes system extensible to future strategies (e.g., rsync, zfs).
     """
     backend = get_game_backend(game_name)
+    # Refactored to absolute imports for Bazel compatibility (see above).
+    # Default git for deltas; full-copy for legacy/compat; ensures all backends via Bazel.
     if backend == "git":
-        from .git import GitStrategy
+        from gamesave_vcs.strategies.git import GitStrategy
 
         return GitStrategy()
     elif backend == "full-copy":
-        from .full_copy import FullCopyStrategy
+        from gamesave_vcs.strategies.full_copy import FullCopyStrategy
 
         return FullCopyStrategy()
     else:

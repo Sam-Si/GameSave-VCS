@@ -5,15 +5,19 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Union
 
-# Local imports (types inferred from typed modules where possible)
-from .backup import backup_save, list_saves, restore_save
-from .config import (
+# Local imports refactored to absolute (gamesave_vcs.*) for Bazel py_binary/py_library compatibility.
+# Relative imports (from .*) fail under Bazel's runpy/runfiles setup (__package__ not set for script entry).
+# Absolute ensures all CLI funcs (games, add, backup, watch, list, restore + backends) work via `bazel run //:gamesave`.
+# Preserves original functionality; also works with pip -e.
+# Types/doc unchanged.
+from gamesave_vcs.backup import backup_save, list_saves, restore_save
+from gamesave_vcs.config import (
     add_game,
     get_supported_game_path,
     list_supported_games,
     search_games,
 )
-from .watcher import GameWatcher
+from gamesave_vcs.watcher import GameWatcher
 
 
 def main() -> None:

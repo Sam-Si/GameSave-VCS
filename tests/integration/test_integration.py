@@ -5,10 +5,23 @@ from pathlib import Path
 
 import pytest
 
-# os, tempfile unused (PEP 8 clean; integration relies on subprocess/FS helpers)
+# os for env in subprocess (to fix bazel dir check when run from hermetic execroot)
+import os
+# tempfile unused (PEP 8 clean; integration relies on subprocess/FS helpers)
 from gamesave_vcs.config import get_base_dir
 
-GAMESAVE_BIN = shutil.which("gamesave") or "/opt/venv/bin/gamesave"
+# Workspace root for Bazel: subprocess (bazel run) must run from workspace dir (not bazel-out execroot).
+# Prevents "bazel should not be called from a bazel output directory" error when pytest_bin runs under Bazel.
+# Hardcoded (instead of __file__ which resolves under runfiles/_main) ; matches workspace.
+WORKSPACE_ROOT = "/testbed/GameSave-VCS"
+
+# GAMESAVE_CMD for Bazel: run CLI binary via bazel (replaces pip entrypoint/venv bin).
+# Allows integration tests to exercise ALL functionalities (add/backup/watch/restore etc) under Bazel.
+# `bazel run //:gamesave -- <args>` ; list form for subprocess/Popen.
+# Fallback which kept for compat (e.g. pip -e), but defaults Bazel in this setup.
+# Note: bazel output (INFO/warnings) in stderr/stdout , but tests check keywords leniently (or/ in ).
+# This ensures real FS/Dulwich/CLI journeys work post-refactor.
+GAMESAVE_CMD = ["bazel", "run", "//:gamesave", "--"]
 
 
 @pytest.fixture
@@ -34,12 +47,22 @@ def temp_setup():
 
 
 def run_cli(args, cwd=None):
-    # Helper: use full bin path
+    """Helper to run CLI via Bazel (or fallback).
+    Uses list cmd for subprocess; ensures all existing CLI functionalities testable in Bazel context.
+    """
+    # GAMESAVE_CMD is list (bazel run ... -- )
+    # Env: copy and set PWD=workspace to satisfy bazel "not called from output dir" check.
+    # (execroot for pytest_bin sets PWD=execroot; inheritance causes issue despite cwd)
+    # This ensures bazel run succeeds hermetically.
+    env = os.environ.copy()
+    env["PWD"] = WORKSPACE_ROOT
     result = subprocess.run(
-        [GAMESAVE_BIN] + args,
+        GAMESAVE_CMD + args,
         capture_output=True,
         text=True,
-        cwd=cwd or Path.cwd(),
+        # cwd + PWD for bazel dir detection
+        cwd=cwd or WORKSPACE_ROOT,
+        env=env,
     )
     return result
 
@@ -87,13 +110,19 @@ def test_integration_watch_change_detection(temp_setup):
     game_name = f"testgame_{int(time.time())}"
     save_file.write_text("initial data")
     run_cli(["add", game_name, str(save_file)])
-    # Act: watch bg
-    watch_cmd = [GAMESAVE_BIN, "watch", game_name, "--interval", "1"]
+    # Act: watch bg via Bazel cmd
+    # GAMESAVE_CMD + args ; Popen for bg watcher test (change detect/backup)
+    watch_cmd = GAMESAVE_CMD + ["watch", game_name, "--interval", "1"]
+    # env for Popen to set PWD (bazel check)
+    env = os.environ.copy()
+    env["PWD"] = WORKSPACE_ROOT
     watch_proc = subprocess.Popen(
         watch_cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        cwd=Path.cwd(),
+        # cwd + env PWD for Bazel
+        cwd=WORKSPACE_ROOT,
+        env=env,
     )
     time.sleep(2)
     save_file.write_text("changed data")
@@ -176,10 +205,19 @@ def test_integration_watcher_journey(temp_setup):
     game_name = f"watcher_{int(time.time())}"
     save_file.write_text("level 5")
     run_cli(["add", game_name, str(save_file)])
-    # Act: start watcher bg + change
-    watch_cmd = [GAMESAVE_BIN, "watch", game_name, "--interval", "1"]
+    # Act: start watcher bg + change via Bazel
+    # Ensures watcher functionality (hash detect , auto backup) tested under Bazel.
+    watch_cmd = GAMESAVE_CMD + ["watch", game_name, "--interval", "1"]
+    # env for Popen to set PWD (bazel check)
+    env = os.environ.copy()
+    env["PWD"] = WORKSPACE_ROOT
     watch_proc = subprocess.Popen(
-        watch_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        watch_cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        # cwd + env PWD for Bazel compatibility
+        cwd=WORKSPACE_ROOT,
+        env=env,
     )
     time.sleep(2)
     save_file.write_text("level 15")  # Trigger

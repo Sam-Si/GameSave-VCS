@@ -3,9 +3,10 @@ import time
 from pathlib import Path
 from typing import Optional
 
-# Local
-from .backup import backup_save, get_save_hash
-from .config import get_game_path
+# Local imports refactored to absolute for Bazel compatibility (see cli.py/backup.py notes).
+# Ensures watcher (polling + hash-based change detect, triggers backup) works via CLI or direct.
+from gamesave_vcs.backup import backup_save, get_save_hash
+from gamesave_vcs.config import get_game_path
 
 
 class GameWatcher:

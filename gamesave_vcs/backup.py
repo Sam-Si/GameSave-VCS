@@ -8,10 +8,13 @@ from typing import List, Optional, Union
 # Strategy logic split to gamesave_vcs/strategies/ subpackage (single class/file for extensibility).
 # Dispatch in base.py ; re-export here for compat.
 # ensure_dirs for robustness (tests patching get_*).
-from .config import ensure_dirs, get_backups_dir, get_game_path, load_config
+# Imports refactored to absolute (gamesave_vcs.*) for Bazel compatibility (see cli.py for details).
+# This ensures backup/list/restore dispatch to strategies (git/full-copy) works under `bazel test`/`run`.
+# No functional change; maintains API for CLI/watcher/tests.
+from gamesave_vcs.config import ensure_dirs, get_backups_dir, get_game_path, load_config
 
 # get_strategy re-exported from strategies; BackupStrategy unused here (internal to subpkg)
-from .strategies.base import get_strategy
+from gamesave_vcs.strategies.base import get_strategy
 
 
 def get_save_hash(save_path: Union[str, Path]) -> str:

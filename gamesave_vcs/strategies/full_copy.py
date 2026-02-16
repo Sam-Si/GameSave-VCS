@@ -11,11 +11,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Union
 
-# Internal
-from ..config import get_backups_dir, get_game_path
+# Internal imports refactored to absolute for Bazel compatibility (config from root pkg, base from subpkg).
+# See base.py/cli.py for details. Ensures full-copy strategy (recursive atomic copy) works in Bazel.
+# Strategy pattern unchanged for extensibility/legacy.
+from gamesave_vcs.config import get_backups_dir, get_game_path
 
 # Base ABC for inheritance (strategy pattern)
-from .base import BackupStrategy
+from gamesave_vcs.strategies.base import BackupStrategy
 
 
 class FullCopyStrategy(BackupStrategy):

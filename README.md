@@ -8,13 +8,16 @@ GameSave-VCS is a Python-based tool that brings the power of Git version control
 See Architectural Choices for tradeoffs/details.
 
 ## Installation
+Legacy (optional; Bazel hermetic replaces):
 ```bash
 pip install -e .                  # CLI-only (pure Python backend)
-pip install -e .[test]            # + pytest/coverage
+pip install -e .[test]            # + pytest/coverage (for lint/type in sh)
 ```
+**Recommended: Bazel for build management**
+No pip needed; hermetic Python/deps via rules_python , MODULE.bazel , requirements_lock.txt (from pyproject deps).
 
 ## Running in Headless/Docker
-Add `xvfb` to apt installs (for tests). Prefix: `xvfb-run pytest ...`
+Add `xvfb` to apt installs (for tests). Prefix: `xvfb-run bazel run //:pytest ...` (or pytest legacy).
 
 ## Usage and Demos
 GameSave-VCS supports 10 popular games out-of-the-box with predefined save paths (mostly directories for complex saves like Minecraft worlds; Linux-focused examples; adjust for your setup/OS/Steam/Proton installs as needed). Use `gamesave games --list` or `gamesave games --search <query>` (e.g. "elden") to browse/search them. The `add` command accepts an optional save path (supporting files **or full directories recursively**) for supported games (auto-fills predefined path; no existence check on add - taken as user-provided). If path missing on backup/watch, soft warning ("Backup skipped... nothing to backup yet") - non-blocking.
@@ -203,21 +206,37 @@ Documented inline; summary:
 - **Error/Headless**: Git uses dummy config ; soft skips ; pure Python + subprocess git.
 These prioritize usability , efficiency (git deltas) , extensibility , maintainability.
 
+### Bazel Build/Run (Primary for Build Management)
+Refactored to Bazel (rules_python , hermetic Python 3.13 , dulwich/pytest locked):
+- Build lib/package: `bazel build //:gamesave_vcs`
+- Run all CLI functionalities: `bazel run //:gamesave -- <cmd>`
+  e.g.
+  - `bazel run //:gamesave -- games --list`
+  - `bazel run //:gamesave -- add <game> [--backend git|full-copy]`
+  - `bazel run //:gamesave -- backup <game>`
+  - `bazel run //:gamesave -- watch <game>`
+  - `bazel run //:gamesave -- list [--game <name>]`
+  - `bazel run //:gamesave -- restore [backup_spec]`
+  (All original: strategies , watcher , config , restore , recursive , git/full-copy)
+- Run tests (all unit/integration): `bazel run //:pytest -- tests/ [pytest args]`
+  e.g. `bazel run //:pytest -- tests/ -q --tb=no` or with --cov=...
+
+See MODULE.bazel (deps/toolchain) , BUILD.bazel (py_library/binary , pytest wrapper for compat) , requirements_lock.txt .
+
+Legacy pip works , but Bazel reproducible .
+
 ### Testing (from project root)
 ```bash
-# Setup
-pip install -e .[test]
-
-# Run tests
-pytest                                  # Basic
-./run_tests.sh                          # Full coverage + HTML (recommended; AAA pattern)
-pytest tests/test_backup.py             # Specific
-pytest --cov=gamesave_vcs --cov-report=html  # Coverage only
-pytest -q --tb=no                       # Quiet
-pytest tests/integration -q --tb=no      # Integration (real, no mocks)
+# No setup pip (Bazel hermetic)
+./run_tests.sh                          # Full: lint/type + bazel pytest/cov (recommended)
+bazel run //:pytest -- tests/ -q --tb=no  # Quiet tests
+bazel run //:pytest -- tests/test_backup.py  # Specific
+bazel run //:pytest -- tests/ --cov=/testbed/GameSave-VCS/gamesave_vcs --cov-report=html  # Cov
+bazel run //:pytest -- tests/integration -q --tb=no  # Integration (real CLI/FS)
 ```
 
-- Coverage HTML: `htmlcov/index.html` (100% on logic/branches).
-- See `tests/` + `run_tests.sh`.
+- Coverage HTML: `htmlcov/index.html` (>=90% ; Bazel-instrumented).
+- See `run_tests.sh` , tests/ .
 - Backups/configs in `~/.gamesave-vcs/`.
+- Bazel cache in ~/.cache/bazel .
 

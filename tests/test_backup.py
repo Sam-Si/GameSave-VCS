@@ -46,21 +46,26 @@ def test_get_save_hash_dir(tmp_path):
     assert len(hash_val) == 64
 
 
-def test_backup_save():
-    # Arrange: force full-copy strategy to hit legacy copy2 branch (git default otherwise uses git)
-    # New tests for git strategy added below
+def test_backup_save(tmp_path):
+    """Test backup_save dispatch to full-copy (file case).
+    Updated to use tmp_path + real FS for robustness in Bazel (avoids MagicMock Path exists skip; common FS-mock fragility post-strat refactor).
+    Ensures backup not skipped , hits copy2 ; covers strategy dispatch.
+    """
+    # Arrange: force full-copy , real save file (real Path.exists succeeds)
+    # get_game_path patch updated to strategies.full_copy (strat import ; fixes skip/None in backup_save)
+    # tmp_path for robust FS in Bazel ; covers strategy dispatch.
     with patch(
         "gamesave_vcs.strategies.base.get_game_backend", return_value="full-copy"
     ):
-        with patch("gamesave_vcs.backup.get_game_path") as mock_get:
-            mock_get.return_value = "/tmp/save.dat"
-            with patch("gamesave_vcs.backup.Path") as mock_path:
-                mock_path.return_value.exists.return_value = True
-                # Patch updated to strategies.full_copy.shutil.copy2 (shutil moved in strategies refactor for PEP8/single-class).
-                # Ensures mock hit in FullCopyStrategy.backup_save (atomic copy) under Bazel/dispatch.
-                with patch("gamesave_vcs.strategies.full_copy.shutil.copy2") as mock_copy:
-                    # Act
-                    backup_path = backup_save("testgame")
+        save_file = tmp_path / "save.dat"
+        save_file.write_text("test data")
+        with patch("gamesave_vcs.strategies.full_copy.get_game_path") as mock_get:
+            mock_get.return_value = str(save_file)
+            # Patch updated to strategies.full_copy.shutil.copy2 (shutil moved in strategies refactor for PEP8/single-class).
+            # Ensures mock hit in FullCopyStrategy.backup_save (atomic copy) under Bazel/dispatch.
+            with patch("gamesave_vcs.strategies.full_copy.shutil.copy2") as mock_copy:
+                # Act
+                backup_path = backup_save("testgame")
     # Assert
     assert backup_path is not None
     mock_copy.assert_called()
@@ -72,7 +77,10 @@ def test_backup_save_dir(tmp_path):
     with patch(
         "gamesave_vcs.strategies.base.get_game_backend", return_value="full-copy"
     ):
-        with patch("gamesave_vcs.backup.get_game_path") as mock_get:
+        # Patch updated to strategies.full_copy.get_game_path (strat import from config; backup patch ineffective for dispatch).
+        # Fixes skip/None in FullCopyStrategy.backup_save ; tmp_path + real dir for Bazel/FS robust.
+        # (Top backup.get_game_path kept only where used in backup.py funcs.)
+        with patch("gamesave_vcs.strategies.full_copy.get_game_path") as mock_get:
             mock_get.return_value = str(tmp_path / "testsave")
             test_dir = tmp_path / "testsave"
             test_dir.mkdir()
@@ -153,16 +161,26 @@ def test_restore_save():
             mock_backup.is_dir.return_value = False  # file branch for copy2
             with patch("gamesave_vcs.backup.get_game_path") as mock_get:
                 mock_get.return_value = "/tmp/save.dat"
-                with patch("gamesave_vcs.strategies.full_copy.shutil.copy2") as mock_copy:
-                    with patch(
-                        "gamesave_vcs.strategies.full_copy.tempfile.mkstemp"
-                    ) as mock_mkstemp:
-                        mock_mkstemp.return_value = (3, "/tmp/tmp_save")
-                        with patch("gamesave_vcs.strategies.full_copy.os.close"):
-                            with patch("gamesave_vcs.strategies.full_copy.os.replace"):
-                                with patch("gamesave_vcs.strategies.full_copy.os.unlink"):
-                                    # Act
-                                    result = restore_save("/fake/backup")
+                # Additional patch for strategies.full_copy.get_game_path (strat uses in restore_save ; dispatch + strat both cover in full-copy)
+                # Fixes assert True in test (skip in strat); MagicMock Path + FS robust in Bazel.
+                with patch("gamesave_vcs.strategies.full_copy.get_game_path", return_value="/tmp/save.dat"):
+                    # Patch Path updated to strategies.full_copy.Path (used in FullCopyStrategy.restore_save ; backup.Path only for dispatch)
+                    # Fixes "Backup not found" skip (exists check) ; enables file branch.
+                    with patch("gamesave_vcs.strategies.full_copy.Path") as mock_path:
+                        mock_backup = MagicMock()
+                        mock_path.return_value = mock_backup
+                        mock_backup.exists.return_value = True
+                        mock_backup.is_dir.return_value = False  # file branch for copy2
+                    with patch("gamesave_vcs.strategies.full_copy.shutil.copy2") as mock_copy:
+                        with patch(
+                            "gamesave_vcs.strategies.full_copy.tempfile.mkstemp"
+                        ) as mock_mkstemp:
+                            mock_mkstemp.return_value = (3, "/tmp/tmp_save")
+                            with patch("gamesave_vcs.strategies.full_copy.os.close"):
+                                with patch("gamesave_vcs.strategies.full_copy.os.replace"):
+                                    with patch("gamesave_vcs.strategies.full_copy.os.unlink"):
+                                        # Act
+                                        result = restore_save("/fake/backup")
     # Assert
     assert result is True
     mock_copy.assert_called()
@@ -195,25 +213,30 @@ def test_restore_save_dir(tmp_path):
             mock_save.is_dir.return_value = True  # rmtree
             with patch("gamesave_vcs.backup.get_game_path") as mock_get:
                 mock_get.return_value = str(save_target)
+                # Additional patch for strategies.full_copy.get_game_path (strat use in restore ; full-copy dispatch)
+                # Fixes assert True (prevents game not found skip in strat); Bazel/FS robust.
                 with patch(
-                    "gamesave_vcs.strategies.full_copy.shutil.copytree"
-                ) as mock_copytree:
+                    "gamesave_vcs.strategies.full_copy.get_game_path", return_value=str(save_target)
+                ):
                     with patch(
-                        "gamesave_vcs.strategies.full_copy.shutil.rmtree"
-                    ) as mock_rmtree:
-                        # Patches for tempfile/os in dir case restore (uses mkstemp? No , but replace/unlink for atomic; MagicMock Path causes FS fail on os.replace)
-                        # Note: dir case uses os.replace(tmp_save, save_path)
+                        "gamesave_vcs.strategies.full_copy.shutil.copytree"
+                    ) as mock_copytree:
                         with patch(
-                            "gamesave_vcs.strategies.full_copy.tempfile.mkstemp"
-                        ) as mock_mk:
-                            # not hit in dir but safe
-                            mock_mk.return_value = (3, "/tmp/tmp")
-                            with patch("gamesave_vcs.strategies.full_copy.os.close"):
-                                with patch("gamesave_vcs.strategies.full_copy.os.replace"):
-                                    with patch(
-                                        "gamesave_vcs.strategies.full_copy.os.unlink"
-                                    ):
-                                        result = restore_save(str(backup_dir))
+                            "gamesave_vcs.strategies.full_copy.shutil.rmtree"
+                        ) as mock_rmtree:
+                            # Patches for tempfile/os in dir case restore (uses mkstemp? No , but replace/unlink for atomic; MagicMock Path causes FS fail on os.replace)
+                            # Note: dir case uses os.replace(tmp_save, save_path)
+                            with patch(
+                                "gamesave_vcs.strategies.full_copy.tempfile.mkstemp"
+                            ) as mock_mk:
+                                # not hit in dir but safe
+                                mock_mk.return_value = (3, "/tmp/tmp")
+                                with patch("gamesave_vcs.strategies.full_copy.os.close"):
+                                    with patch("gamesave_vcs.strategies.full_copy.os.replace"):
+                                        with patch(
+                                            "gamesave_vcs.strategies.full_copy.os.unlink"
+                                        ):
+                                            result = restore_save(str(backup_dir))
         assert result is True
         mock_copytree.assert_called()
         mock_rmtree.assert_called()
@@ -243,21 +266,26 @@ def test_restore_save_latest_and_no_backups(capsys):
                 mock_path.return_value.is_dir.return_value = False
                 with patch("gamesave_vcs.backup.get_game_path") as mock_get:
                     mock_get.return_value = "/tmp/save.dat"
+                    # Additional patch for strategies.full_copy.get_game_path (strat use in restore_save ; fixes assert True)
+                    # For auto latest + full-copy branch.
                     with patch(
-                        "gamesave_vcs.strategies.full_copy.shutil.copy2"
-                    ) as mock_copy:
+                        "gamesave_vcs.strategies.full_copy.get_game_path", return_value="/tmp/save.dat"
+                    ):
                         with patch(
-                            "gamesave_vcs.strategies.full_copy.tempfile.mkstemp"
-                        ) as mock_mkstemp:
-                            mock_mkstemp.return_value = (3, "/tmp/tmp_save")
-                            with patch("gamesave_vcs.strategies.full_copy.os.close"):
-                                with patch("gamesave_vcs.strategies.full_copy.os.replace"):
-                                    with patch(
-                                        "gamesave_vcs.strategies.full_copy.os.unlink"
-                                    ):
-                                        result = restore_save(
-                                            None
-                                        )  # auto latest
+                            "gamesave_vcs.strategies.full_copy.shutil.copy2"
+                        ) as mock_copy:
+                            with patch(
+                                "gamesave_vcs.strategies.full_copy.tempfile.mkstemp"
+                            ) as mock_mkstemp:
+                                mock_mkstemp.return_value = (3, "/tmp/tmp_save")
+                                with patch("gamesave_vcs.strategies.full_copy.os.close"):
+                                    with patch("gamesave_vcs.strategies.full_copy.os.replace"):
+                                        with patch(
+                                            "gamesave_vcs.strategies.full_copy.os.unlink"
+                                        ):
+                                            result = restore_save(
+                                                None
+                                            )  # auto latest
     assert result is True
     mock_copy.assert_called()
 
@@ -445,7 +473,7 @@ def test_git_strategy_backup(
     mock_copytree.assert_called()
 
 
-@patch("gamesave_vcs.backup.Repo")
+@patch("gamesave_vcs.strategies.git.Repo")
 @patch("gamesave_vcs.backup.get_backups_dir")
 def test_git_strategy_list_saves(mock_bdir, mock_repo_cls):
     """Test git list with Dulwich: walker parse to (ts, 'repo@commit', game) specs."""
@@ -518,8 +546,10 @@ def test_git_restore_exception():
         with patch(
             "dulwich.porcelain.reset", side_effect=Exception("dulwich fail")
         ):
+            # Patch updated to strategies.git.get_game_path (strat import ; fixes FileNotFound/skip in git.restore_save under Bazel/test mocks)
+            # + backup.Path for dispatch ; ensures exception branch hit.
             with patch(
-                "gamesave_vcs.backup.get_game_path",
+                "gamesave_vcs.strategies.git.get_game_path",
                 return_value="/tmp/save.dat",
             ):
                 with patch(
@@ -539,8 +569,9 @@ def test_detect_strategy_git():
 def test_git_list_empty_repo():
     """Hit except/empty in git list_saves (no commits)."""
     with patch("gamesave_vcs.strategies.base.get_game_backend", return_value="git"):
+        # Patch updated to strategies.git.Repo (Dulwich import in git.py; fixes AttributeError in list_saves dispatch under Bazel)
         with patch(
-            "gamesave_vcs.backup.Repo", side_effect=Exception("no repo")
+            "gamesave_vcs.strategies.git.Repo", side_effect=Exception("no repo")
         ):
             saves = list_saves("emptygame")
     assert saves == []
@@ -553,8 +584,10 @@ def test_git_list_empty_repo():
 def test_git_restore_dir_case(mock_copytree, mock_reset):
     """Hit is_dir=True branch in git restore copytree."""
     with patch("gamesave_vcs.strategies.base.get_game_backend", return_value="git"):
+        # Patch updated to git.get_game_path (for strat in git.restore_save ; fixes FileNotFound/skip)
+        # backup.Path for dispatch infer game .
         with patch(
-            "gamesave_vcs.backup.get_game_path", return_value="/tmp/save_dir"
+            "gamesave_vcs.strategies.git.get_game_path", return_value="/tmp/save_dir"
         ):
             with patch("gamesave_vcs.backup.Path") as mock_p:
                 # Mocks: repo , save_dir , content_dir (is_dir=True)
@@ -577,8 +610,10 @@ def test_git_restore_copy_error():
     """Hit except in git restore copy (e.g. shutil fail)."""
     with patch("gamesave_vcs.strategies.base.get_game_backend", return_value="git"):
         with patch("dulwich.porcelain.reset"):
+            # Patch updated to git.get_game_path (strat use ; fixes FileNotFoundError in restore)
+            # backup.Path for dispatch ; ensures except branch cov.
             with patch(
-                "gamesave_vcs.backup.get_game_path", return_value="/tmp/save"
+                "gamesave_vcs.strategies.git.get_game_path", return_value="/tmp/save"
             ):
                 with patch(
                     "gamesave_vcs.backup.Path.exists", return_value=True

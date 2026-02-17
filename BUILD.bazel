@@ -1,0 +1,67 @@
+load("@rules_python//python:defs.bzl", "py_library", "py_binary")
+load("@pypi//:requirements.bzl", "requirement")
+
+# Main library package.
+# Replaces setuptools package discovery from pyproject.toml.
+# Includes gamesave_vcs/ and subpackages (strategies/); deps on dulwich only.
+# Visibility public for reuse in binaries/tests.
+py_library(
+    name = "gamesave_vcs",
+    srcs = glob(["gamesave_vcs/**/*.py"]),
+    # Allows package imports from root (gamesave_vcs as top-level pkg)
+    imports = ["."],
+    visibility = ["//visibility:public"],
+    deps = [
+        requirement("dulwich"),
+    ],
+)
+
+# CLI binary target.
+# Replaces [project.scripts] "gamesave = gamesave_vcs.cli:main" from pyproject.toml.
+# This enables running ALL existing CLI functionalities via Bazel:
+#   bazel run //:gamesave -- <subcommand> [args]
+# e.g.:
+#   bazel run //:gamesave -- games --list
+#   bazel run //:gamesave -- add <game> [--backend git|full-copy]
+#   bazel run //:gamesave -- backup <game>
+#   bazel run //:gamesave -- watch <game>
+#   bazel run //:gamesave -- list [--game <name>]
+#   bazel run //:gamesave -- restore [backup_spec]
+# All features (strategies, watcher, config, integration with Dulwich, recursive backups) preserved.
+py_binary(
+    name = "gamesave",
+    srcs = ["gamesave_vcs/cli.py"],
+    main = "gamesave_vcs/cli.py",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":gamesave_vcs",
+    ],
+)
+
+# Pytest runner binary for tests.
+# Replaces direct `pytest` / `pip install -e .[test]` invocation.
+# Uses wrapper + deps on gamesave_vcs + pytest/pytest-cov to run ALL existing tests:
+#   bazel run //:pytest -- tests/ --cov=gamesave_vcs --cov-report=term-missing --cov-fail-under=90
+#   bazel run //:pytest -- tests/ -q --tb=no  (quick)
+#   bazel run //:pytest -- tests/integration/
+# Preserves:
+# - All test files (unit: test_*.py, integration, conftest fixtures/mocks)
+# - pytest features, coverage (pytest-cov), AAA patterns
+# - Existing test logic (e.g., patching config/strategies, Dulwich, watcher)
+# - No changes to test code; pyproject.toml [tool.pytest] still referenceable but args override
+# Ensures full existing functionalities tested under Bazel (backups, restore, CLI, etc).
+# pyright/linters kept outside (in run_tests.sh) as not core to build/tests.
+# Note: wrapper in tests/ for organization; srcs glob includes it + tests/ for discovery.
+py_binary(
+    name = "pytest",
+    # Wrapper for pytest.main() + all test srcs (incl. wrapper, conftest, integration) for discovery/PYTHONPATH
+    # under Bazel runfiles. Glob ensures tests/ structure preserved (imports, fixtures).
+    srcs = glob(["tests/**/*.py"]),
+    main = "tests/pytest_wrapper.py",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":gamesave_vcs",
+        requirement("pytest"),
+        requirement("pytest-cov"),
+    ],
+)

@@ -13,9 +13,11 @@ from typing import List, Optional, Union
 import dulwich.porcelain as porcelain
 from dulwich.repo import Repo
 
-# Internal: base ABC , config (relative in subpkg)
-from ..config import get_backups_dir, get_game_path
-from .base import BackupStrategy
+# Internal imports refactored to absolute for Bazel compatibility.
+# Dulwich GitStrategy (default delta backend) now importable under Bazel.
+# See base.py for details; no change to pure-Python VCS logic.
+from gamesave_vcs.config import get_backups_dir, get_game_path
+from gamesave_vcs.strategies.base import BackupStrategy
 
 
 class GitStrategy(BackupStrategy):

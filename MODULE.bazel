@@ -1,0 +1,27 @@
+module(
+    name = "gamesave_vcs",
+    version = "0.1.0",
+)
+
+bazel_dep(name = "rules_python", version = "0.40.0")
+
+# Python toolchain for 3.13 (must match requires-python)
+python = use_extension("@rules_python//python/extensions:python.bzl", "python")
+python.toolchain(
+    # Uses hermetic Python; downloads if not present. Supports 3.13 in recent rules_python.
+    python_version = "3.13",
+    is_default = True,
+    # Enables coverage for tests
+    configure_coverage_tool = True,
+)
+use_repo(python, "python_3_13")
+
+# Pip dependencies from lockfile (generated from pyproject deps + test deps)
+# This replaces setuptools/pip install; hermetic and reproducible.
+pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
+pip.parse(
+    hub_name = "pypi",
+    python_version = "3.13",
+    requirements_lock = "//:requirements_lock.txt",
+)
+use_repo(pip, "pypi")

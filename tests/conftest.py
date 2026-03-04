@@ -14,7 +14,9 @@ def clean_config(
     Uses pytest tmp_path and monkeypatch for isolation.
     """
     test_home = tmp_path / "test_home"
+    test_home.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr("gamesave_vcs.config.Path.home", lambda: test_home)
+    monkeypatch.setenv("HOME", str(test_home))
     # Cleanup after
     yield
     if test_home.exists():

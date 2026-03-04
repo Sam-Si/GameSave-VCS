@@ -13,8 +13,8 @@ from typing import List, Optional, Union
 # No functional change; maintains API for CLI/watcher/tests.
 from gamesave_vcs.config import ensure_dirs, get_backups_dir, get_game_path, load_config
 
-# get_strategy re-exported from strategies; BackupStrategy unused here (internal to subpkg)
-from gamesave_vcs.strategies.base import get_strategy
+# Import strategies module to allow mocking get_strategy
+from gamesave_vcs import strategies
 
 
 def get_save_hash(save_path: Union[str, Path]) -> str:
@@ -57,7 +57,7 @@ def backup_save(game_name: str) -> Optional[Path]:
     Calls ensure_dirs for robustness (tests patching config funcs).
     """
     ensure_dirs()
-    strategy = get_strategy(game_name)
+    strategy = strategies.get_strategy(game_name)
     return strategy.backup_save(game_name)
 
 
@@ -76,7 +76,8 @@ def list_saves(
         return saves
     if game_name:
         # Dispatch for specific game
-        strategy = get_strategy(game_name)
+        # Always use strategies.get_strategy() to facilitate mocking in tests
+        strategy = strategies.get_strategy(game_name)
         saves = strategy.list_saves(game_name)
     else:
         # Collect games: from config + FS dirs (robust for mixed/legacy)
@@ -88,7 +89,8 @@ def list_saves(
                 game_names.add(d.name)
         for gname in game_names:
             try:
-                strategy = get_strategy(gname)
+                # Use strategies.get_strategy() for aggregate scan as well
+                strategy = strategies.get_strategy(gname)
                 saves.extend(strategy.list_saves(gname))
             except Exception:
                 # Skip bad/empty to prevent test/UX break
@@ -105,6 +107,7 @@ def restore_save(backup_spec: Optional[Union[str, Path]] = None) -> bool:
     Calls ensure_dirs for robustness (tests patching get_*).
     """
     ensure_dirs()
+    game_name = None
     if not backup_spec:
         saves = list_saves()
         if not saves:
@@ -113,19 +116,25 @@ def restore_save(backup_spec: Optional[Union[str, Path]] = None) -> bool:
         backup_spec = saves[0][1]  # Path or str spec
         game_name = saves[0][2]
         print(f"Auto-restoring latest: {backup_spec}")
-    # Infer game_name from spec for dispatch
-    spec_str = str(backup_spec)
-    if "@" in spec_str:
-        # git style
-        repo_str, _ = spec_str.split("@", 1)
-        game_name = Path(repo_str).name
-    else:
-        # full-copy: backup item path
-        backup_path = Path(backup_spec)
-        game_name = backup_path.parent.name
+    
+    # Infer game_name from spec for dispatch if not already set (by auto-latest)
+    if not game_name:
+        spec_str = str(backup_spec)
+        if "@" in spec_str:
+            # git style: repo_path@commit
+            repo_str, _ = spec_str.split("@", 1)
+            game_name = Path(repo_str).name
+        else:
+            # full-copy: backup item path (absolute)
+            backup_path = Path(backup_spec).absolute()
+            # In full-copy, backups are in backups/<game_name>/<timestamp>_save
+            # So game_name is the parent's name.
+            game_name = backup_path.parent.name
+            
     # Game must be determinable and exist (for invalid/legacy specs)
+    # We check if it exists in config to be sure.
     if not game_name or not get_game_path(game_name):
-        print("Backup not found")
+        print(f"Backup not found for game: {game_name}")
         return False
-    strategy = get_strategy(game_name)
+    strategy = strategies.get_strategy(game_name)
     return strategy.restore_save(backup_spec)

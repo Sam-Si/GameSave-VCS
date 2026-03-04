@@ -21,8 +21,24 @@ test = ["pytest==9.0.2", "pytest-cov==7.0.0", "pyright==1.1.408"]
 
 [tool.pytest.ini_options]
 minversion = "6.0"
-addopts = "--cov=gamesave_vcs --cov-report=term-missing --cov-report=html"
+addopts = "--cov=. --cov-report=term-missing --cov-report=html"
 testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["."]
+branch = true
+relative_files = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+
+[tool.coverage.paths]
+source = [
+    "gamesave_vcs",
+    "**/gamesave_vcs",
+    "*/gamesave_vcs",
+]
 
 # Pyright config for type checking
 # Relaxed for deps without stubs (dulwich, pytest) + tests; ensures source types strict.

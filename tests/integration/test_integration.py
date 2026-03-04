@@ -1,6 +1,7 @@
 import shutil
 import subprocess
 import time
+import sys
 from pathlib import Path
 
 import pytest
@@ -12,55 +13,64 @@ from gamesave_vcs.config import get_base_dir
 
 # Workspace root for Bazel: subprocess (bazel run) must run from workspace dir (not bazel-out execroot).
 # Prevents "bazel should not be called from a bazel output directory" error when pytest_bin runs under Bazel.
-# Hardcoded (instead of __file__ which resolves under runfiles/_main) ; matches workspace.
-WORKSPACE_ROOT = "/testbed/GameSave-VCS"
+# Using BUILD_WORKSPACE_DIRECTORY if set (Bazel run environment)
+WORKSPACE_ROOT = os.environ.get("BUILD_WORKSPACE_DIRECTORY", os.getcwd())
 
-# GAMESAVE_CMD for Bazel: run CLI binary via bazel (replaces pip entrypoint/venv bin).
-# Allows integration tests to exercise ALL functionalities (add/backup/watch/restore etc) under Bazel.
-# `bazel run //:gamesave -- <args>` ; list form for subprocess/Popen.
-# Fallback which kept for compat (e.g. pip -e), but defaults Bazel in this setup.
-# Note: bazel output (INFO/warnings) in stderr/stdout , but tests check keywords leniently (or/ in ).
-# This ensures real FS/Dulwich/CLI journeys work post-refactor.
-GAMESAVE_CMD = ["bazel", "run", "//:gamesave", "--"]
+# GAMESAVE_CMD: If running under Bazel, use the direct python entry point to avoid nested bazel calls.
+# If not under Bazel, fallback to 'gamesave' assuming it's in PATH.
+if "BUILD_WORKSPACE_DIRECTORY" in os.environ:
+    # Under Bazel, we can call the CLI via the python interpreter and the cli.py script
+    # We need to ensure gamesave_vcs is in PYTHONPATH.
+    GAMESAVE_CMD = [sys.executable, "-m", "gamesave_vcs.cli"]
+else:
+    GAMESAVE_CMD = ["gamesave"]
 
 
 @pytest.fixture
 def temp_setup():
     # Arrange fixed /tmp + clean config to isolate tests
-    tmp = Path("/tmp/gamesave-test")
+    # Using a more unique path to avoid collisions
+    tmp = Path("/tmp/gamesave-test-integration")
     if tmp.exists():
         shutil.rmtree(tmp)
-    tmp.mkdir()
+    tmp.mkdir(parents=True)
     save_dir = tmp / "saves"
     save_dir.mkdir()
     save_file = save_dir / "game.save"
     save_file.write_text("initial data")
-    # Clean any prior game config/backups
+    
+    # Isolate HOME to prevent affecting user's real config
+    old_home = os.environ.get("HOME")
+    os.environ["HOME"] = str(tmp)
+    
+    # Clean any prior game config/backups in the NEW home
     config_dir = get_base_dir()
     if config_dir.exists():
         shutil.rmtree(config_dir, ignore_errors=True)
+        
     yield tmp, save_file
+    
+    # Restore HOME
+    if old_home:
+        os.environ["HOME"] = old_home
     shutil.rmtree(tmp, ignore_errors=True)
-    # Post-clean
-    if config_dir.exists():
-        shutil.rmtree(config_dir, ignore_errors=True)
 
 
 def run_cli(args, cwd=None):
-    """Helper to run CLI via Bazel (or fallback).
-    Uses list cmd for subprocess; ensures all existing CLI functionalities testable in Bazel context.
+    """Helper to run CLI directly via Python to avoid Bazel-in-Bazel issues.
     """
-    # GAMESAVE_CMD is list (bazel run ... -- )
-    # Env: copy and set PWD=workspace to satisfy bazel "not called from output dir" check.
-    # (execroot for pytest_bin sets PWD=execroot; inheritance causes issue despite cwd)
-    # This ensures bazel run succeeds hermetically.
     env = os.environ.copy()
-    env["PWD"] = WORKSPACE_ROOT
+    # Ensure the root of the project is in PYTHONPATH
+    project_root = WORKSPACE_ROOT
+    if "PYTHONPATH" in env:
+        env["PYTHONPATH"] = f"{project_root}:{env['PYTHONPATH']}"
+    else:
+        env["PYTHONPATH"] = project_root
+        
     result = subprocess.run(
         GAMESAVE_CMD + args,
         capture_output=True,
         text=True,
-        # cwd + PWD for bazel dir detection
         cwd=cwd or WORKSPACE_ROOT,
         env=env,
     )
@@ -113,14 +123,18 @@ def test_integration_watch_change_detection(temp_setup):
     # Act: watch bg via Bazel cmd
     # GAMESAVE_CMD + args ; Popen for bg watcher test (change detect/backup)
     watch_cmd = GAMESAVE_CMD + ["watch", game_name, "--interval", "1"]
-    # env for Popen to set PWD (bazel check)
+    # env for Popen
     env = os.environ.copy()
-    env["PWD"] = WORKSPACE_ROOT
+    project_root = WORKSPACE_ROOT
+    if "PYTHONPATH" in env:
+        env["PYTHONPATH"] = f"{project_root}:{env['PYTHONPATH']}"
+    else:
+        env["PYTHONPATH"] = project_root
+    
     watch_proc = subprocess.Popen(
         watch_cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        # cwd + env PWD for Bazel
         cwd=WORKSPACE_ROOT,
         env=env,
     )
@@ -208,14 +222,18 @@ def test_integration_watcher_journey(temp_setup):
     # Act: start watcher bg + change via Bazel
     # Ensures watcher functionality (hash detect , auto backup) tested under Bazel.
     watch_cmd = GAMESAVE_CMD + ["watch", game_name, "--interval", "1"]
-    # env for Popen to set PWD (bazel check)
+    # env for Popen
     env = os.environ.copy()
-    env["PWD"] = WORKSPACE_ROOT
+    project_root = WORKSPACE_ROOT
+    if "PYTHONPATH" in env:
+        env["PYTHONPATH"] = f"{project_root}:{env['PYTHONPATH']}"
+    else:
+        env["PYTHONPATH"] = project_root
+    
     watch_proc = subprocess.Popen(
         watch_cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        # cwd + env PWD for Bazel compatibility
         cwd=WORKSPACE_ROOT,
         env=env,
     )

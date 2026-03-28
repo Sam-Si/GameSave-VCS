@@ -6,6 +6,7 @@
 /bazel-testlogs
 /bazel-genfiles
 /bazel-execroot
+.bazelbsp/
 MODULE.bazel.lock
 .bazelrc.local
 *.bazel~

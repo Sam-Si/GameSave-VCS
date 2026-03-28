@@ -13,6 +13,7 @@ python.toolchain(
     is_default = True,
     # Enables coverage for tests
     configure_coverage_tool = True,
+    ignore_root_user_error = True,
 )
 use_repo(python, "python_3_13")
 

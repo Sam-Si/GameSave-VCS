@@ -1,13 +1,13 @@
+# os for env in subprocess (to fix bazel dir check when run from hermetic execroot)
+import os
 import shutil
 import subprocess
-import time
 import sys
+import time
 from pathlib import Path
 
 import pytest
 
-# os for env in subprocess (to fix bazel dir check when run from hermetic execroot)
-import os
 # tempfile unused (PEP 8 clean; integration relies on subprocess/FS helpers)
 from gamesave_vcs.config import get_base_dir
 

@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Version control for game saves"
 readme = "README.md"
 requires-python = ">=3.13"
-dependencies = ["dulwich==1.0.0"]
+dependencies = ["dulwich==1.0.0", "textual>=0.52.0", "rich>=13.7.0"]
 
 [tool.setuptools.packages.find]
 where = ["."]
@@ -17,7 +17,7 @@ where = ["."]
 gamesave = "gamesave_vcs.cli:main"
 
 [project.optional-dependencies]
-test = ["pytest==9.0.2", "pytest-cov==7.0.0", "pyright==1.1.408"]
+test = ["pytest==8.3.4", "pytest-cov==7.0.0", "pyright==1.1.408", "pytest-asyncio==0.24.0"]
 
 [tool.pytest.ini_options]
 minversion = "6.0"

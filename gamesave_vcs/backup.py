@@ -4,9 +4,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Union
 
-# Import strategies module to allow mocking get_strategy
-from gamesave_vcs import strategies
-
 # PEP 8: sorted stdlib, then local.
 # Strategy logic split to gamesave_vcs/strategies/ subpackage (single class/file for extensibility).
 # Dispatch in base.py ; re-export here for compat.
@@ -14,12 +11,10 @@ from gamesave_vcs import strategies
 # Imports refactored to absolute (gamesave_vcs.*) for Bazel compatibility (see cli.py for details).
 # This ensures backup/list/restore dispatch to strategies (git/full-copy) works under `bazel test`/`run`.
 # No functional change; maintains API for CLI/watcher/tests.
-from gamesave_vcs.config import (
-    ensure_dirs,
-    get_backups_dir,
-    get_game_path,
-    load_config,
-)
+from gamesave_vcs.config import ensure_dirs, get_backups_dir, get_game_path, load_config
+
+# Import strategies module to allow mocking get_strategy
+from gamesave_vcs import strategies
 
 
 def get_save_hash(save_path: Union[str, Path]) -> str:

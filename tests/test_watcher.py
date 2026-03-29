@@ -150,6 +150,7 @@ def test_watcher_loop_none():
 
 def test_watcher_loop_real(capsys):
     # Arrange: full loop body coverage (pre-exists, while/sleep, no-change, change+backup)
+    # Updated for metadata-first optimization: mocks metadata functions too
     with patch("gamesave_vcs.watcher.get_game_path") as mock_get:
         mock_get.return_value = "/tmp/save.dat"
         watcher = GameWatcher("testgame")
@@ -164,17 +165,24 @@ def test_watcher_loop_real(capsys):
 
     with patch("gamesave_vcs.watcher.Path") as mock_path:
         mock_path.return_value.exists.return_value = True
-        with patch("gamesave_vcs.watcher.get_save_hash") as mock_hash:
-            mock_hash.side_effect = [
-                "init",
-                "same",
-                "new",
-            ]  # pre-loop, no-change, change
-            with patch("gamesave_vcs.watcher.backup_save") as mock_backup:
-                with patch("gamesave_vcs.watcher.time.sleep") as mock_sleep:
-                    mock_sleep.side_effect = stop_after_iters
-                    # Act: execute loop iters
-                    watcher._watch_loop()
+        mock_path.return_value.is_file.return_value = True
+        # Mock metadata functions for new optimized watcher
+        with patch("gamesave_vcs.watcher._get_file_metadata") as mock_meta:
+            mock_meta.side_effect = [
+                (1000, 100),  # initial
+                (1000, 100),  # no change
+                (2000, 200),  # change detected (mtime/size changed)
+            ]
+            with patch("gamesave_vcs.watcher.get_save_hash") as mock_hash:
+                mock_hash.side_effect = [
+                    "init",
+                    "new",  # hash confirms change
+                ]
+                with patch("gamesave_vcs.watcher.backup_save") as mock_backup:
+                    with patch("gamesave_vcs.watcher.time.sleep") as mock_sleep:
+                        mock_sleep.side_effect = stop_after_iters
+                        # Act: execute loop iters
+                        watcher._watch_loop()
     # Assert: full paths + change detect
     assert mock_backup.called  # at least once on change
     captured = capsys.readouterr()

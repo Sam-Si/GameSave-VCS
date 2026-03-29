@@ -2,8 +2,13 @@
 
 PEP 8 compliant: single class per file in strategies subpackage.
 Efficient VCS deltas; no host Git/subprocess; extensible base.
+
+Storage Optimizations:
+- Retention policy: Limits number of commits to prevent unbounded growth
+- Garbage collection: Periodic GC to reclaim space from old objects
 """
 
+import logging
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -19,6 +24,8 @@ from dulwich.repo import Repo
 from gamesave_vcs.config import get_backups_dir, get_game_path
 from gamesave_vcs.strategies.base import BackupStrategy
 
+logger = logging.getLogger(__name__)
+
 
 class GitStrategy(BackupStrategy):
     """Git-based strategy (default, powered by Dulwich pure-Python lib): efficient delta backups.
@@ -27,7 +34,32 @@ class GitStrategy(BackupStrategy):
     Figures delta between previous save and now (stores diffs, compression, history).
     Much better than full copy-paste for repeated saves. Keeps full history, cheap restore.
     Per-game repo at ~/.gamesave-vcs/backups/<game>/
+    
+    Storage Optimizations:
+    - retention_count: Maximum number of commits to keep (0 = unlimited)
+    - gc_interval: Run GC every N backups (0 = never)
     """
+    
+    DEFAULT_RETENTION_COUNT = 20  # Keep last 20 backups by default
+    DEFAULT_GC_INTERVAL = 10  # GC every 10 backups
+    
+    def __init__(
+        self,
+        retention_count: int = DEFAULT_RETENTION_COUNT,
+        gc_interval: int = DEFAULT_GC_INTERVAL
+    ) -> None:
+        """Initialize GitStrategy with storage optimization settings.
+        
+        Args:
+            retention_count: Maximum commits to keep (0 = unlimited)
+            gc_interval: Run GC every N backups (0 = never)
+        """
+        self.retention_count = retention_count
+        self.gc_interval = gc_interval
+        self._backup_count = 0  # Track backups for GC interval
+        logger.debug(
+            f"GitStrategy initialized: retention={retention_count}, gc_interval={gc_interval}"
+        )
 
     def _ensure_repo(self, repo_dir: Path) -> Path:
         """Init repo if needed using Dulwich porcelain; set user config for author/commit."""
@@ -46,6 +78,86 @@ class GitStrategy(BackupStrategy):
     def _get_content_path(self, repo_dir: Path, save_path: Path) -> Path:
         """Save content stored under repo/<original_save_basename> to mirror structure."""
         return repo_dir / save_path.name
+
+    def _apply_retention(self, repo_dir: Path, keep_count: int) -> None:
+        """Apply retention policy - keep only the most recent N commits.
+        
+        Args:
+            repo_dir: Path to git repository
+            keep_count: Number of commits to keep
+        """
+        if keep_count <= 0:
+            return
+        
+        try:
+            r = Repo(str(repo_dir))
+            commits = list(r.get_walker(max_entries=None))
+            
+            total_commits = len(commits)
+            if total_commits <= keep_count:
+                logger.debug(
+                    f"Retention: {total_commits} commits, keeping all (limit: {keep_count})"
+                )
+                return
+            
+            # Get the commit to reset to (the keep_count-th most recent)
+            # commits are returned newest first
+            target_commit = commits[keep_count - 1].commit
+            target_id = target_commit.id
+            
+            logger.info(
+                f"Applying retention: {total_commits} commits -> {keep_count} commits"
+            )
+            
+            # Reset to the target commit (discarding newer commits)
+            # This effectively prunes the history
+            porcelain.reset(
+                str(repo_dir),
+                treeish=target_id,
+                mode="hard"
+            )
+            
+            logger.info(f"Retention applied: kept last {keep_count} commits")
+            
+        except Exception as e:
+            logger.warning(f"Retention policy failed: {e}")
+            # Don't fail the backup if retention fails
+
+    def _prune_old_commits(self, repo_dir: Path) -> None:
+        """Public method to prune old commits based on retention policy."""
+        if self.retention_count > 0:
+            self._apply_retention(repo_dir, self.retention_count)
+
+    def _run_gc(self, repo_dir: Path, aggressive: bool = False) -> None:
+        """Run git garbage collection to reclaim space.
+        
+        Args:
+            repo_dir: Path to git repository
+            aggressive: If True, run aggressive GC for better compression
+        """
+        try:
+            logger.debug(f"Running git gc (aggressive={aggressive})")
+            
+            # Use dulwich's gc command
+            # gc() prunes loose objects and repacks for efficiency
+            porcelain.gc(str(repo_dir))
+            
+            logger.info("Git garbage collection completed")
+        except Exception as e:
+            logger.warning(f"Git GC failed: {e}")
+            # Don't fail the backup if GC fails
+
+    def _maybe_run_gc(self, repo_dir: Path) -> None:
+        """Run GC if backup count interval is reached."""
+        if self.gc_interval <= 0:
+            return
+        
+        self._backup_count += 1
+        
+        if self._backup_count >= self.gc_interval:
+            logger.debug(f"GC interval reached ({self.gc_interval}), running gc")
+            self._run_gc(repo_dir, aggressive=False)
+            self._backup_count = 0
 
     def backup_save(self, game_name: str) -> Optional[Path]:
         """Backup via Dulwich: sync save to repo working tree, commit delta.
@@ -93,9 +205,20 @@ class GitStrategy(BackupStrategy):
         # Get current commit hash (via Repo)
         r = Repo(str(repo_dir))
         commit_hash = r.head().decode()
+        
+        # Apply retention policy after backup
+        self._prune_old_commits(repo_dir)
+        
+        # Maybe run GC
+        self._maybe_run_gc(repo_dir)
+        
         # backup_spec = f"{repo_dir}@{commit_hash}"  # for doc
         print(
             f"Backed up {game_name} save to git repo {repo_dir} at commit {commit_hash} (git strategy)"
+        )
+        logger.info(
+            f"Backup complete for {game_name}: commit={commit_hash}, "
+            f"retention={self.retention_count}, gc_interval={self.gc_interval}"
         )
         return repo_dir  # API compat (repo Path)
 

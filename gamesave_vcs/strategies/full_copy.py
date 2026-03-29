@@ -2,14 +2,20 @@
 
 PEP 8 compliant: single class per file in strategies subpackage for extensibility.
 Atomic ops , recursive dir support; kept for backward compat.
+
+Storage Optimizations:
+- Hard-link deduplication: Identical files share storage via hard links
+- Content-addressed storage: Files stored by hash for automatic dedup
 """
 
+import hashlib
+import logging
 import os
 import shutil
 import tempfile
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional, Union
+from typing import Dict, List, Optional, Union
 
 # Internal imports refactored to absolute for Bazel compatibility (config from root pkg, base from subpkg).
 # See base.py/cli.py for details. Ensures full-copy strategy (recursive atomic copy) works in Bazel.
@@ -19,13 +25,117 @@ from gamesave_vcs.config import get_backups_dir, get_game_path
 # Base ABC for inheritance (strategy pattern)
 from gamesave_vcs.strategies.base import BackupStrategy
 
+logger = logging.getLogger(__name__)
+
 
 class FullCopyStrategy(BackupStrategy):
     """Original implementation: full folder/file copy-paste to timestamped locations.
 
     Kept for users who prefer it (e.g., no git dep, simple FS copies). Not delta-efficient,
     but fulfills "won't deny them" old style.
+    
+    Storage Optimizations:
+    - use_hardlinks: Create hard links for identical files (saves disk space)
+    - content_addressed: Store files by content hash for deduplication
     """
+    
+    DEFAULT_USE_HARDLINKS = True
+    DEFAULT_CONTENT_ADDRESSED = True
+
+    def __init__(
+        self,
+        use_hardlinks: bool = DEFAULT_USE_HARDLINKS,
+        content_addressed: bool = DEFAULT_CONTENT_ADDRESSED,
+        content_store: Optional[Path] = None
+    ) -> None:
+        """Initialize FullCopyStrategy with storage optimization options.
+
+        Args:
+            use_hardlinks: Use hard links for duplicate files
+            content_addressed: Store files by content hash
+            content_store: Directory for content-addressed storage
+        """
+        self.use_hardlinks = use_hardlinks
+        self.content_addressed = content_addressed
+        self.content_store = content_store
+        self._content_hashes: Dict[Path, str] = {}  # Cache for content hashes
+
+        if self.content_addressed and self.content_store:
+            self.content_store.mkdir(parents=True, exist_ok=True)
+
+        logger.debug(
+            f"FullCopyStrategy initialized: hardlinks={use_hardlinks}, "
+            f"content_addressed={content_addressed}"
+        )
+
+    def _file_hash(self, file_path: Path) -> str:
+        """Compute SHA256 hash of file content."""
+        hasher = hashlib.sha256()
+        with open(file_path, 'rb') as f:
+            for chunk in iter(lambda: f.read(65536), b''):
+                hasher.update(chunk)
+        return hasher.hexdigest()
+
+    def _get_content_path(self, content_hash: str) -> Path:
+        """Get storage path for content hash.
+
+        Uses prefix subdirectories to avoid too many files in one directory.
+        """
+        if not self.content_store:
+            raise ValueError("Content store not configured")
+
+        prefix = content_hash[:2]
+        return self.content_store / prefix / content_hash
+
+    def _copy_with_hardlinks(self, src: Path, dst: Path) -> None:
+        """Copy file using hard links when possible.
+
+        If hard linking fails (different filesystem), falls back to copy.
+        """
+        dst.parent.mkdir(parents=True, exist_ok=True)
+
+        if not self.use_hardlinks:
+            # Hard links disabled, use normal copy
+            shutil.copy2(src, dst)
+            return
+
+        try:
+            # Try to create hard link
+            if dst.exists():
+                dst.unlink()
+            os.link(src, dst)
+            logger.debug(f"Created hard link: {src} -> {dst}")
+        except OSError as e:
+            # Hard link failed (different FS, permissions, etc.)
+            logger.debug(f"Hard link failed ({e}), falling back to copy")
+            shutil.copy2(src, dst)
+
+    def _backup_with_dedup(self, src: Path, dst: Path) -> None:
+        """Backup file with content-addressed deduplication.
+
+        Uses hard links to share storage for identical files.
+        """
+        if not self.content_addressed or not self.content_store:
+            # No dedup, use regular copy with optional hardlinks
+            self._copy_with_hardlinks(src, dst)
+            return
+
+        # Compute content hash
+        content_hash = self._file_hash(src)
+        content_path = self._get_content_path(content_hash)
+
+        # Check if content already exists
+        if content_path.exists():
+            # Content exists, create hard link to it
+            logger.debug(f"Content {content_hash[:16]}... exists, linking")
+        else:
+            # New content, store it
+            content_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, content_path)
+            logger.debug(f"Stored new content: {content_hash[:16]}...")
+
+        # Create hard link from content store to destination
+        self._copy_with_hardlinks(content_path, dst)
 
     def backup_save(self, game_name: str) -> Optional[Path]:
         """Atomic backup for full copy: copy to temp , os.replace for all-or-nothing (POSIX atomic rename)."""

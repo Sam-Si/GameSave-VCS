@@ -49,6 +49,18 @@ def main() -> None:
         help="Backup strategy: git (default, efficient delta-based VCS via pure-Python Dulwich) or full-copy (original full folder copy-paste)",
     )
 
+    # TUI command
+    tui_parser = subparsers.add_parser(
+        "tui", 
+        help="Launch retro game-inspired terminal UI"
+    )
+    tui_parser.add_argument(
+        "--theme",
+        choices=["zelda", "dark", "light"],
+        default="zelda",
+        help="TUI theme (default: zelda)"
+    )
+
     watch_parser = subparsers.add_parser(
         "watch", help="Start watcher for a game"
     )
@@ -147,6 +159,19 @@ def main() -> None:
     elif args.command == "backup":
         # name: str
         backup_save(args.name)
+    elif args.command == "tui":
+        # Launch retro TUI
+        try:
+            from gamesave_vcs.tui.app import run_tui
+            run_tui()
+        except ImportError as e:
+            print("Error: TUI dependencies not installed.")
+            print("\nTo use the TUI, install with pip:")
+            print("  pip install textual rich")
+            print("\nThen run:")
+            print("  gamesave tui")
+            print("\nOr use the standard CLI commands:")
+            print("  gamesave --help")
 
 
 if __name__ == "__main__":

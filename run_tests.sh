@@ -16,9 +16,9 @@ flake8 --ignore=E501,F401,F841,W503 .
 
 echo "Running tests with coverage via Bazel (all functionalities: unit/integration/CLI/backends)..."
 # Uses pytest_wrapper ; --cov= absolute source path for instrumentation (Bazel runfiles otherwise miss cov data).
-# Uses $(pwd) for portability across environments.
-# Using --config=docker for optimized container execution.
-bazel run --config=docker //:pytest -- tests/ --cov=$(pwd)/gamesave_vcs --cov-report=term-missing --cov-report=html --cov-fail-under=90
+# Equiv to original ; report in htmlcov/ ; fail-under ensures >=90%.
+# Note: Bazel hermetic , cov on src tree.
+bazel run //:pytest -- tests/ --cov=/testbed/GameSave-VCS/gamesave_vcs --cov-report=term-missing --cov-report=html --cov-fail-under=90
 
 echo "Tests and type checks passed! See htmlcov/ for detailed coverage report."
 echo "Bazel build artifacts in bazel-bin/ ; run CLI: bazel run //:gamesave -- <cmd>"
